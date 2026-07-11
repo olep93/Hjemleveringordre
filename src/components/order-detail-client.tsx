@@ -14,13 +14,15 @@ import {
   FileSearch,
   FileText,
   Info,
+  Lock,
   MapPin,
   PackageCheck,
-  Pencil,
   Play,
+  Save,
   Trash2,
   Truck,
-  UserRound
+  UserRound,
+  X
 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 
@@ -36,9 +38,7 @@ type Item = {
   description: string;
   productName?: string | null;
   productUrl?: string | null;
-  productImageBlob?: BlobReference | null;
   productImageUrl?: string | null;
-  productLookupStatus?: string | null;
   quantity: number;
   unit?: string | null;
   price?: number | null;
@@ -77,17 +77,6 @@ type Order = {
   }>;
 };
 
-function formatDate(value?: string | null): string {
-  if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat("nb-NO", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric"
-  }).format(date);
-}
-
 function formatDateTime(value?: string | null): string {
   if (!value) return "";
   const date = new Date(value);
@@ -109,6 +98,18 @@ function formatPrice(value?: number | null): string {
   }).format(value);
 }
 
+function statusText(status: string): string {
+  const labels: Record<string, string> = {
+    TO_PICK: "Må plukkes",
+    PICKING: "Under plukking",
+    READY_FOR_LOADING: "Ferdig plukket",
+    LOADED: "Lastet på bil",
+    DELIVERED: "Levert",
+    DEVIATION: "Må kontrolleres"
+  };
+  return labels[status] ?? status;
+}
+
 export default function OrderPage({
   initialUser
 }: {
@@ -118,15 +119,14 @@ export default function OrderPage({
   const id = params.id;
 
   const [order, setOrder] = useState<Order | null>(null);
-  const [actorName, setActorName] = useState(
+  const [actorName] = useState(
     initialUser.role === "GUEST" ? "" : initialUser.displayName
   );
-  const [orderNumber, setOrderNumber] = useState("");
-  const [customerName, setCustomerName] = useState("");
-  const [phone, setPhone] = useState("");
+  const [pickingMode, setPickingMode] = useState(false);
+  const [draftChecks, setDraftChecks] = useState<Record<string, boolean>>({});
   const [placement, setPlacement] = useState("");
-  const [deliveryDate, setDeliveryDate] = useState("");
   const [comment, setComment] = useState("");
+  const [deliveryDate, setDeliveryDate] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -134,6 +134,17 @@ export default function OrderPage({
   const canEdit = initialUser.role !== "GUEST";
   const canDelete =
     initialUser.role === "ADMIN" || initialUser.role === "MANAGER";
+
+  const hydrateDraft = useCallback((nextOrder: Order) => {
+    setDraftChecks(
+      Object.fromEntries(
+        (nextOrder.items ?? []).map((item) => [item.id, Boolean(item.checked)])
+      )
+    );
+    setPlacement(nextOrder.placement ?? "");
+    setComment(nextOrder.comment ?? "");
+    setDeliveryDate(nextOrder.deliveryDate ?? "");
+  }, []);
 
   const load = useCallback(async () => {
     const response = await fetch(`/api/orders/${id}`, { cache: "no-store" });
@@ -144,13 +155,8 @@ export default function OrderPage({
     }
 
     setOrder(result.order);
-    setOrderNumber(result.order.orderNumber ?? "");
-    setCustomerName(result.order.customerName ?? "");
-    setPhone(result.order.phone ?? "");
-    setPlacement(result.order.placement ?? "");
-    setDeliveryDate(result.order.deliveryDate ?? "");
-    setComment(result.order.comment ?? "");
-  }, [id]);
+    hydrateDraft(result.order);
+  }, [hydrateDraft, id]);
 
   useEffect(() => {
     void load().catch((loadError) =>
@@ -163,14 +169,20 @@ export default function OrderPage({
   const progress = useMemo(() => {
     const pluckable = (order?.items ?? []).filter((item) => !item.isFreight);
     return {
-      checked: pluckable.filter((item) => item.checked).length,
+      checked: pluckable.filter((item) =>
+        pickingMode ? draftChecks[item.id] : item.checked
+      ).length,
       total: pluckable.length
     };
-  }, [order]);
+  }, [draftChecks, order, pickingMode]);
 
-  async function update(status?: string) {
-    if (!canEdit) return setError("Gjestetilgang er skrivebeskyttet.");
-    if (!actorName.trim()) return setError("Skriv inn navnet ditt først.");
+  const canBeginPicking =
+    canEdit &&
+    order &&
+    !["READY_FOR_LOADING", "LOADED", "DELIVERED"].includes(order.status);
+
+  async function startPicking() {
+    if (!canBeginPicking || !actorName) return;
 
     setSaving(true);
     setError(null);
@@ -181,26 +193,114 @@ export default function OrderPage({
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          status,
+          status: "PICKING",
           actorName,
-          orderNumber: orderNumber || null,
-          customerName: customerName || null,
-          phone: phone || null,
+          pickingSessionEnded: false
+        })
+      });
+
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error ?? "Kunne ikke starte.");
+
+      setPickingMode(true);
+      setInfo("Plukkemodus er åpnet. Marker varer, velg plassering og lagre.");
+      await load();
+    } catch (startError) {
+      setError(
+        startError instanceof Error ? startError.message : "Kunne ikke starte."
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function cancelPicking() {
+    if (order) hydrateDraft(order);
+    setPickingMode(false);
+    setError(null);
+    setInfo("Endringene i denne plukkeøkten ble forkastet.");
+  }
+
+  function itemChecks() {
+    return (order?.items ?? [])
+      .filter((item) => !item.isFreight)
+      .map((item) => ({
+        id: item.id,
+        checked: Boolean(draftChecks[item.id])
+      }));
+  }
+
+  async function savePicking(finalize: boolean) {
+    if (!order || !actorName) return;
+
+    setSaving(true);
+    setError(null);
+    setInfo(null);
+
+    try {
+      const response = await fetch(`/api/orders/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          status: finalize ? "READY_FOR_LOADING" : "PICKING",
+          actorName,
           placement: placement || null,
           deliveryDate: deliveryDate || null,
-          comment: comment || null
+          comment: comment || null,
+          itemChecks: itemChecks(),
+          pickingSessionEnded: true
         })
+      });
+
+      const result = await response.json();
+      if (!response.ok) {
+        throw new Error(result.error ?? "Kunne ikke lagre plukkingen.");
+      }
+
+      setPickingMode(false);
+      setInfo(
+        finalize
+          ? "Ordren er ferdigstilt og flyttet til «Til utkjøring»."
+          : "Plukkingen er lagret. Ordren er låst igjen."
+      );
+      await load();
+    } catch (saveError) {
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : "Kunne ikke lagre plukkingen."
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function setStatus(status: "LOADED" | "DELIVERED") {
+    if (!actorName) return;
+
+    setSaving(true);
+    setError(null);
+
+    try {
+      const response = await fetch(`/api/orders/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status, actorName })
       });
 
       const result = await response.json();
       if (!response.ok) throw new Error(result.error ?? "Kunne ikke oppdatere.");
 
-      setInfo(status ? "Statusen er oppdatert." : "Endringene er lagret.");
+      setInfo(
+        status === "LOADED"
+          ? "Ordren er markert lastet på bil."
+          : "Ordren er markert levert."
+      );
       await load();
-    } catch (updateError) {
+    } catch (statusError) {
       setError(
-        updateError instanceof Error
-          ? updateError.message
+        statusError instanceof Error
+          ? statusError.message
           : "Kunne ikke oppdatere."
       );
     } finally {
@@ -209,11 +309,11 @@ export default function OrderPage({
   }
 
   async function reparse() {
-    if (!canEdit) return setError("Gjestetilgang er skrivebeskyttet.");
+    if (!canEdit) return;
 
     setSaving(true);
     setError(null);
-    setInfo("Tolker PDF og henter oppdatert produktinformasjon fra Obsbygg.no …");
+    setInfo("Tolker PDF og oppdaterer produktinformasjonen …");
 
     try {
       const response = await fetch(`/api/orders/${id}`, {
@@ -224,12 +324,10 @@ export default function OrderPage({
 
       const result = await response.json();
       if (!response.ok) {
-        throw new Error(result.error ?? "Kunne ikke tolke dokumentet på nytt.");
+        throw new Error(result.error ?? "Kunne ikke tolke dokumentet.");
       }
 
-      setInfo(
-        `Ferdig. Fant ${result.itemCount ?? 0} varelinjer og oppdaterte produktinformasjonen.`
-      );
+      setInfo(`Fant ${result.itemCount ?? 0} varelinjer.`);
       await load();
     } catch (parseError) {
       setInfo(null);
@@ -243,32 +341,9 @@ export default function OrderPage({
     }
   }
 
-  async function toggleItem(item: Item) {
-    if (!canEdit) return setError("Gjestetilgang er skrivebeskyttet.");
-    if (!actorName.trim()) {
-      return setError("Skriv inn navnet ditt før du krysser av varer.");
-    }
-
-    const response = await fetch(
-      `/api/orders/${id}/items/${encodeURIComponent(item.id)}`,
-      {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ checked: !item.checked, actorName })
-      }
-    );
-
-    const result = await response.json();
-    if (!response.ok) {
-      return setError(result.error ?? "Kunne ikke oppdatere varelinjen.");
-    }
-
-    await load();
-  }
-
   async function uploadPhoto(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!canEdit) return setError("Gjestetilgang er skrivebeskyttet.");
+    if (!pickingMode) return;
 
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
@@ -285,7 +360,9 @@ export default function OrderPage({
         throw new Error(result.error ?? "Kunne ikke laste opp bilde.");
       }
       formElement.reset();
+      setInfo("Bildet er lastet opp.");
       await load();
+      setPickingMode(true);
     } catch (uploadError) {
       setError(
         uploadError instanceof Error
@@ -298,14 +375,10 @@ export default function OrderPage({
   }
 
   async function deleteOrder() {
-    if (!canDelete) {
-      return setError("Bare leder eller administrator kan slette ordre.");
-    }
+    if (!canDelete) return;
     if (!window.confirm("Vil du slette denne ordren permanent?")) return;
 
     setSaving(true);
-    setError(null);
-
     try {
       const response = await fetch(`/api/orders/${id}`, { method: "DELETE" });
       const result = await response.json();
@@ -323,139 +396,158 @@ export default function OrderPage({
     }
   }
 
-  return (
-    <main>
-      <AppHeader user={initialUser} />
-
-      {!order ? (
+  if (!order) {
+    return (
+      <main>
+        <AppHeader user={initialUser} />
         <section className="modern-order-page">
           <div className="modern-card">
             {error ? <div className="error-box">{error}</div> : "Henter ordre …"}
           </div>
         </section>
-      ) : (
-        <section className="modern-order-page">
-          <div className="order-titlebar">
-            <div>
-              <Link className="modern-back-link" href="/">
-                <ArrowLeft size={18} /> Tilbake til oversikt
-              </Link>
-              <div className="title-line">
-                <h1>
-                  {orderNumber
-                    ? `Kundeordre ${orderNumber}${
-                        customerName ? ` – ${customerName}` : ""
-                      }`
-                    : "Ny ordre – må kontrolleres"}
-                </h1>
-                <span className="status-chip">{order.status}</span>
-              </div>
-              {order.createdAt && (
-                <p className="created-line">
-                  <CalendarDays size={16} />
-                  Opprettet {formatDateTime(order.createdAt)}
-                </p>
-              )}
-            </div>
+      </main>
+    );
+  }
 
-            <div className="title-actions">
-              {order.originalDocumentUrl && (
-                <a
-                  className="outline-action"
-                  href={order.originalDocumentUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  <FileText size={18} /> Åpne original ordre
-                  <ExternalLink size={15} />
-                </a>
-              )}
+  return (
+    <main>
+      <AppHeader user={initialUser} />
 
-              {canEdit &&
-                (order.originalDocumentBlob?.pathname ||
-                  order.originalDocumentPath) && (
-                  <button
-                    className="blue-action"
-                    disabled={saving}
-                    onClick={() => void reparse()}
-                  >
-                    <FileSearch size={18} />
-                    {saving ? "Arbeider …" : "Tolk og oppdater produktinfo"}
-                  </button>
-                )}
+      <section className="modern-order-page">
+        <div className="order-titlebar">
+          <div>
+            <Link className="modern-back-link" href="/">
+              <ArrowLeft size={18} /> Tilbake til oversikt
+            </Link>
+            <div className="title-line">
+              <h1>
+                {order.orderNumber
+                  ? `Kundeordre ${order.orderNumber}${
+                      order.customerName ? ` – ${order.customerName}` : ""
+                    }`
+                  : order.title}
+              </h1>
+              <span className="status-chip">{statusText(order.status)}</span>
             </div>
+            {order.createdAt && (
+              <p className="created-line">
+                <CalendarDays size={16} />
+                Opprettet {formatDateTime(order.createdAt)}
+              </p>
+            )}
           </div>
 
-          {initialUser.role === "GUEST" && (
-            <div className="guest-notice">
-              Du ser ordren som gjest. Logg inn for å plukke eller redigere.
-            </div>
+          <div className="title-actions">
+            {order.originalDocumentUrl && (
+              <a
+                className="outline-action"
+                href={order.originalDocumentUrl}
+                target="_blank"
+                rel="noreferrer"
+              >
+                <FileText size={18} /> Åpne original ordre
+                <ExternalLink size={15} />
+              </a>
+            )}
+
+            {canEdit &&
+              !pickingMode &&
+              (order.originalDocumentBlob?.pathname ||
+                order.originalDocumentPath) && (
+                <button
+                  className="outline-action"
+                  disabled={saving}
+                  onClick={() => void reparse()}
+                >
+                  <FileSearch size={18} />
+                  Oppdater produktinfo
+                </button>
+              )}
+          </div>
+        </div>
+
+        {error && <div className="error-box order-alert">{error}</div>}
+        {info && <div className="info-message order-alert">{info}</div>}
+
+        <div className="picking-workflow-banner">
+          <div className={pickingMode ? "workflow-icon active" : "workflow-icon"}>
+            {pickingMode ? <Play size={22} /> : <Lock size={22} />}
+          </div>
+          <div>
+            <strong>
+              {pickingMode ? "Plukkemodus er åpen" : "Ordren er låst"}
+            </strong>
+            <p>
+              {pickingMode
+                ? "Marker det som er plukket, velg plassering og last opp bilde. Lagre når du er ferdig."
+                : "Plukkliste og plassering kan først endres etter at du starter plukkingen."}
+            </p>
+          </div>
+
+          {!pickingMode && canBeginPicking && (
+            <button
+              className="blue-action workflow-start"
+              disabled={saving}
+              onClick={() => void startPicking()}
+            >
+              <Play size={18} />
+              {order.status === "PICKING" ? "Fortsett plukking" : "Start plukking"}
+            </button>
           )}
+        </div>
 
-          <div className="modern-detail-grid">
-            <section className="modern-card order-information-card">
-              <div className="modern-card-title">
-                <span className="title-icon"><ClipboardIcon /></span>
-                <h2>Ordreinformasjon</h2>
+        <div className="modern-detail-grid staged-picking-grid">
+          <section className="modern-card order-information-card">
+            <div className="modern-card-title">
+              <span className="title-icon"><PackageCheck size={21} /></span>
+              <h2>Ordreinformasjon</h2>
+            </div>
+
+            <div className="order-summary-list">
+              <div>
+                <span>Kundeordre</span>
+                <strong>{order.orderNumber ?? "Ikke registrert"}</strong>
               </div>
+              <div>
+                <span>Kunde</span>
+                <strong>{order.customerName ?? "Ikke registrert"}</strong>
+              </div>
+              <div>
+                <span>Telefon</span>
+                <strong>{order.phone ?? "Ikke registrert"}</strong>
+              </div>
+              <div>
+                <span>Leveringsdato</span>
+                <strong>{deliveryDate || "Ikke satt"}</strong>
+              </div>
+              <div>
+                <span>Plukket av</span>
+                <strong>{order.pickedBy ?? "Ikke startet"}</strong>
+              </div>
+              <div>
+                <span>Plassering</span>
+                <strong>{order.placement ?? "Ikke valgt"}</strong>
+              </div>
+            </div>
 
-              <div className="modern-form-grid">
-                <label>
-                  Kundeordrenummer
-                  <input
-                    value={orderNumber}
-                    onChange={(event) => setOrderNumber(event.target.value)}
-                    disabled={!canEdit}
-                  />
-                </label>
-                <label>
-                  Kundenavn
-                  <input
-                    value={customerName}
-                    onChange={(event) => setCustomerName(event.target.value)}
-                    disabled={!canEdit}
-                  />
-                </label>
-                <label>
-                  Telefon
-                  <div className="input-with-icon">
-                    <UserRound size={17} />
-                    <input
-                      value={phone}
-                      onChange={(event) => setPhone(event.target.value)}
-                      disabled={!canEdit}
-                      placeholder="Telefonnummer"
-                    />
-                  </div>
-                </label>
-                <label>
-                  Navnet ditt
-                  <div className="input-with-icon">
-                    <UserRound size={17} />
-                    <input
-                      value={actorName}
-                      onChange={(event) => setActorName(event.target.value)}
-                      disabled={!canEdit}
-                    />
-                  </div>
-                </label>
+            {pickingMode && (
+              <div className="picking-session-fields">
                 <label>
                   Leveringsdato
                   <input
                     type="date"
                     value={deliveryDate}
                     onChange={(event) => setDeliveryDate(event.target.value)}
-                    disabled={!canEdit}
                   />
                 </label>
+
                 <label>
-                  Plassering
+                  Plassering av ferdig ordre
                   <div className="input-with-icon">
                     <MapPin size={17} />
                     <select
                       value={placement}
                       onChange={(event) => setPlacement(event.target.value)}
-                      disabled={!canEdit}
                     >
                       <option value="">Velg plassering</option>
                       <option>Utvendig betong</option>
@@ -464,113 +556,161 @@ export default function OrderPage({
                     </select>
                   </div>
                 </label>
+
                 <label className="full">
                   Kommentar
                   <textarea
                     rows={3}
                     value={comment}
                     onChange={(event) => setComment(event.target.value)}
-                    disabled={!canEdit}
-                    placeholder="Legg til kommentar …"
+                    placeholder="Kommentar til plukkingen …"
                   />
                 </label>
-              </div>
 
-              {error && <div className="error-box">{error}</div>}
-              {info && <div className="info-message">{info}</div>}
+                <div className="full picking-photo-block">
+                  <h3><Camera size={18} /> Bilde av ferdig ordre</h3>
+                  <form className="modern-photo-form" onSubmit={uploadPhoto}>
+                    <input
+                      name="file"
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      required
+                    />
+                    <button className="outline-action" disabled={saving}>
+                      <Camera size={18} /> Last opp
+                    </button>
+                  </form>
 
-              {canEdit && (
-                <div className="modern-action-grid">
-                  <button
-                    className="blue-action"
-                    disabled={saving}
-                    onClick={() => void update("PICKING")}
-                  >
-                    <Play size={18} /> Start plukking
-                  </button>
-                  <button
-                    className="green-action"
-                    disabled={saving}
-                    onClick={() => void update("READY_FOR_LOADING")}
-                  >
-                    <CheckCircle2 size={18} /> Klar for lasting
-                  </button>
-                  <button
-                    className="outline-action"
-                    disabled={saving}
-                    onClick={() => void update("LOADED")}
-                  >
-                    <Truck size={18} /> Lastet på bil
-                  </button>
-                  <button
-                    className="outline-action"
-                    disabled={saving}
-                    onClick={() => void update()}
-                  >
-                    <Pencil size={18} /> Lagre endringer
-                  </button>
+                  {(order.photos ?? []).length > 0 && (
+                    <div className="photo-grid compact-photos">
+                      {(order.photos ?? []).map((photo, index) =>
+                        photo.url ? (
+                          <figure key={index}>
+                            <img src={photo.url} alt="Ordrebilde" />
+                          </figure>
+                        ) : null
+                      )}
+                    </div>
+                  )}
                 </div>
-              )}
-
-              <div className="danger-document-row">
-                {canDelete && (
-                  <button
-                    className="modern-danger-button"
-                    disabled={saving}
-                    onClick={() => void deleteOrder()}
-                  >
-                    <Trash2 size={18} /> Slett ordre permanent
-                  </button>
-                )}
-                {order.originalDocumentUrl && (
-                  <a
-                    className="outline-action"
-                    href={order.originalDocumentUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    <FileText size={18} /> Åpne original ordre
-                  </a>
-                )}
               </div>
-            </section>
+            )}
 
-            <section className="modern-card picking-card">
-              <div className="modern-card-title picking-title">
-                <span className="title-icon outline"><Box size={23} /></span>
-                <h2>Plukkeliste</h2>
-                <span className="modern-progress-pill">
-                  {progress.checked} / {progress.total} plukket
-                </span>
+            {!pickingMode && (
+              <div className="locked-order-note">
+                <Info size={18} />
+                Detaljer for plukkingen vises når plukkemodus startes.
               </div>
+            )}
 
-              <div className="modern-item-list">
-                {(order.items ?? []).length === 0 ? (
-                  <div className="empty-state">
-                    Ingen varelinjer ble tolket. Bruk «Tolk og oppdater
-                    produktinfo».
-                  </div>
-                ) : (
-                  (order.items ?? []).map((item) => (
+            {pickingMode && (
+              <div className="picking-session-actions">
+                <button
+                  className="outline-action"
+                  disabled={saving}
+                  onClick={cancelPicking}
+                >
+                  <X size={18} /> Avbryt
+                </button>
+                <button
+                  className="blue-action"
+                  disabled={saving}
+                  onClick={() => void savePicking(false)}
+                >
+                  <Save size={18} /> Lagre og avslutt
+                </button>
+                <button
+                  className="green-action finalize-action"
+                  disabled={saving}
+                  onClick={() => void savePicking(true)}
+                >
+                  <CheckCircle2 size={18} /> Ferdigstill ordre
+                </button>
+              </div>
+            )}
+
+            {!pickingMode && order.status === "READY_FOR_LOADING" && canEdit && (
+              <button
+                className="blue-action full-width-action"
+                disabled={saving}
+                onClick={() => void setStatus("LOADED")}
+              >
+                <Truck size={18} /> Marker som lastet på bil
+              </button>
+            )}
+
+            {!pickingMode && order.status === "LOADED" && canEdit && (
+              <button
+                className="green-action full-width-action"
+                disabled={saving}
+                onClick={() => void setStatus("DELIVERED")}
+              >
+                <CheckCircle2 size={18} /> Marker som levert
+              </button>
+            )}
+
+            {!pickingMode && canDelete && (
+              <button
+                className="modern-danger-button delete-bottom"
+                disabled={saving}
+                onClick={() => void deleteOrder()}
+              >
+                <Trash2 size={18} /> Slett ordre permanent
+              </button>
+            )}
+          </section>
+
+          <section className="modern-card picking-card">
+            <div className="modern-card-title picking-title">
+              <span className="title-icon outline"><Box size={23} /></span>
+              <h2>Plukkeliste</h2>
+              <span className="modern-progress-pill">
+                {progress.checked} / {progress.total} plukket
+              </span>
+            </div>
+
+            <div className="modern-item-list">
+              {(order.items ?? []).length === 0 ? (
+                <div className="empty-state">Ingen varelinjer ble tolket.</div>
+              ) : (
+                (order.items ?? []).map((item) => {
+                  const checked = pickingMode
+                    ? Boolean(draftChecks[item.id])
+                    : Boolean(item.checked);
+
+                  return (
                     <article
-                      className={`modern-product-row ${
-                        item.checked ? "checked" : ""
-                      }`}
+                      className={`modern-product-row ${checked ? "checked" : ""}`}
                       key={item.id}
                     >
-                      <button
-                        className="product-checkbox"
-                        type="button"
-                        onClick={() =>
-                          canEdit && !item.isFreight && void toggleItem(item)
-                        }
-                        disabled={!canEdit || item.isFreight}
-                        aria-label={
-                          item.checked ? "Marker som ikke plukket" : "Marker som plukket"
-                        }
-                      >
-                        {item.checked && <Check size={18} />}
-                      </button>
+                      {pickingMode && !item.isFreight ? (
+                        <button
+                          className="product-checkbox"
+                          type="button"
+                          onClick={() =>
+                            setDraftChecks((current) => ({
+                              ...current,
+                              [item.id]: !current[item.id]
+                            }))
+                          }
+                          aria-label={
+                            checked
+                              ? "Marker som ikke plukket"
+                              : "Marker som plukket"
+                          }
+                        >
+                          {checked && <Check size={18} />}
+                        </button>
+                      ) : (
+                        <div
+                          className={`locked-check-indicator ${
+                            checked ? "checked" : ""
+                          }`}
+                        >
+                          {checked ? <Check size={17} /> : <Lock size={14} />}
+                        </div>
+                      )}
 
                       <div className="product-image-wrap">
                         {item.productImageUrl ? (
@@ -618,82 +758,41 @@ export default function OrderPage({
                         {item.price !== null && item.price !== undefined && (
                           <span>à {formatPrice(item.price)}</span>
                         )}
-                        <em>{item.checked ? "Plukket" : "Ikke plukket"}</em>
+                        <em>{checked ? "Plukket" : "Ikke plukket"}</em>
                       </div>
                     </article>
-                  ))
-                )}
-              </div>
-
-              <div className="picking-help">
-                <Info size={18} />
-                Huk av når varen er plukket. Fremdriften lagres automatisk.
-              </div>
-            </section>
-          </div>
-
-          <div className="lower-grid">
-            <section className="modern-card">
-              <div className="modern-card-title">
-                <span className="title-icon"><Camera size={21} /></span>
-                <h2>Bilder av ferdig ordre</h2>
-              </div>
-              {canEdit && (
-                <form className="modern-photo-form" onSubmit={uploadPhoto}>
-                  <input
-                    name="file"
-                    type="file"
-                    accept="image/*"
-                    capture="environment"
-                    required
-                  />
-                  <button className="blue-action" disabled={saving}>
-                    <Camera size={18} /> Last opp bilde
-                  </button>
-                </form>
+                  );
+                })
               )}
-              <div className="photo-grid">
-                {(order.photos ?? []).map((photo, index) =>
-                  photo.url ? (
-                    <figure key={index}>
-                      <img src={photo.url} alt={photo.filename ?? "Ordrebilde"} />
-                      <figcaption>{photo.uploadedBy ?? "Ukjent"}</figcaption>
-                    </figure>
-                  ) : null
-                )}
-              </div>
-            </section>
+            </div>
 
-            <section className="modern-card">
-              <div className="modern-card-title">
-                <span className="title-icon"><PackageCheck size={21} /></span>
-                <h2>Historikk</h2>
+            <div className="picking-help">
+              <Info size={18} />
+              {pickingMode
+                ? "Endringene lagres samlet når du avslutter plukkeøkten."
+                : "Trykk «Start plukking» for å åpne avhuking og plassering."}
+            </div>
+          </section>
+        </div>
+
+        <section className="modern-card history-card-spacing">
+          <div className="modern-card-title">
+            <span className="title-icon"><PackageCheck size={21} /></span>
+            <h2>Historikk</h2>
+          </div>
+          <div className="timeline">
+            {(order.events ?? []).map((event) => (
+              <div className="timeline-item" key={event.id}>
+                <MapPin size={16} />
+                <div>
+                  <strong>{event.description ?? "Hendelse"}</strong>
+                  <p>{formatDateTime(event.createdAt)}</p>
+                </div>
               </div>
-              <div className="timeline">
-                {(order.events ?? []).map((event) => (
-                  <div className="timeline-item" key={event.id}>
-                    <MapPin size={16} />
-                    <div>
-                      <strong>{event.description ?? "Hendelse"}</strong>
-                      <p>{formatDateTime(event.createdAt)}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </section>
+            ))}
           </div>
         </section>
-      )}
+      </section>
     </main>
-  );
-}
-
-function ClipboardIcon() {
-  return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-      <path d="M8 5h8M9 3h6a1 1 0 0 1 1 1v2H8V4a1 1 0 0 1 1-1Z" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
-      <rect x="5" y="5" width="14" height="16" rx="2.5" stroke="currentColor" strokeWidth="1.8"/>
-      <path d="M9 11h6M9 15h6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
-    </svg>
   );
 }

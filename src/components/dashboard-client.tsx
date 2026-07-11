@@ -53,7 +53,15 @@ const statusLabel: Record<OrderStatus, string> = {
   DEVIATION: "Må kontrolleres"
 };
 
-export default function Dashboard({ user }: { user: { displayName: string; role: string } }) {
+export type DashboardView = "dashboard" | "orders" | "dispatch" | "completed" | "history";
+
+export default function Dashboard({
+  user,
+  view = "dashboard"
+}: {
+  user: { displayName: string; role: string };
+  view?: DashboardView;
+}) {
   const [orders, setOrders] = useState<Order[]>([]);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
@@ -126,6 +134,18 @@ export default function Dashboard({ user }: { user: { displayName: string; role:
   const ready = filtered.filter((order) =>
     ["READY_FOR_LOADING", "LOADED"].includes(order.status)
   );
+  const completed = filtered.filter((order) => order.status === "DELIVERED");
+  const history = filtered.filter((order) =>
+    ["DELIVERED", "ARCHIVED"].includes(order.status)
+  );
+
+  const pageTitle = {
+    dashboard: "Dashboard",
+    orders: "Ordre",
+    dispatch: "Til utkjøring",
+    completed: "Ferdige ordre",
+    history: "Historikk"
+  }[view];
 
   return (
     <main>
@@ -141,6 +161,12 @@ export default function Dashboard({ user }: { user: { displayName: string; role:
       </AppHeader>
 
       <section className="content">
+        <div className="view-heading">
+          <div>
+            <p className="eyebrow">HJEMLEVERINGORDRE</p>
+            <h1>{pageTitle}</h1>
+          </div>
+        </div>
         {notice && <div className="success-toast">{notice}</div>}
 
         <div className="email-info-bar">
@@ -180,18 +206,40 @@ export default function Dashboard({ user }: { user: { displayName: string; role:
 
         {error && <div className="error-box">{error}</div>}
 
-        <OrderSection
-          title="Må plukkes denne uken"
-          subtitle="Nye ordre, ordre under plukking og ordre som må kontrolleres"
-          orders={toPick}
-        />
+        {(view === "dashboard" || view === "orders") && (
+          <OrderSection
+            title="Må plukkes denne uken"
+            subtitle="Nye ordre, ordre under plukking og ordre som må kontrolleres"
+            orders={toPick}
+          />
+        )}
 
-        <OrderSection
-          title="Til utkjøring denne uken"
-          subtitle="Ferdig plukkede ordre og ordre som er lastet på bil"
-          orders={ready}
-          emptyText="Ingen ferdig plukkede ordre ennå."
-        />
+        {(view === "dashboard" || view === "dispatch") && (
+          <OrderSection
+            title="Til utkjøring denne uken"
+            subtitle="Ferdig plukkede ordre og ordre som er lastet på bil"
+            orders={ready}
+            emptyText="Ingen ordre er klare for utkjøring ennå."
+          />
+        )}
+
+        {view === "completed" && (
+          <OrderSection
+            title="Ferdige ordre"
+            subtitle="Ordre som er markert levert"
+            orders={completed}
+            emptyText="Ingen leverte ordre ennå."
+          />
+        )}
+
+        {view === "history" && (
+          <OrderSection
+            title="Historikk"
+            subtitle="Leveranser og arkiverte ordre"
+            orders={history}
+            emptyText="Historikken er tom."
+          />
+        )}
       </section>
     </main>
   );

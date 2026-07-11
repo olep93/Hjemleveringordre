@@ -5,6 +5,7 @@ type ExistingItem = ParsedOrderItem & {
   productName?: string | null;
   productUrl?: string | null;
   productImageBlob?: StoredBlob | null;
+  productImageSourceUrl?: string | null;
   productLookupStatus?: string | null;
   productLookupAt?: string | null;
 };
@@ -13,6 +14,7 @@ export type EnrichedOrderItem = ParsedOrderItem & {
   productName: string | null;
   productUrl: string | null;
   productImageBlob: StoredBlob | null;
+  productImageSourceUrl: string | null;
   productLookupStatus: "FOUND" | "NOT_FOUND" | "ERROR" | "SKIPPED";
   productLookupAt: string;
 };
@@ -25,7 +27,7 @@ type ProductInfo = {
 
 const REQUEST_HEADERS = {
   "User-Agent":
-    "Mozilla/5.0 (compatible; Hjemleveringordre/1.3; +https://jobbverktoy.no)",
+    "Mozilla/5.0 (compatible; Hjemleveringordre/1.4; +https://jobbverktoy.no)",
   Accept: "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
   "Accept-Language": "nb-NO,nb;q=0.9,no;q=0.8,en;q=0.6"
 };
@@ -37,6 +39,7 @@ function decodeHtml(value: string): string {
     .replace(/&#39;/g, "'")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
+    .replace(/&#x2F;/gi, "/")
     .replace(/\\u002F/g, "/")
     .replace(/\\u0026/g, "&")
     .replace(/\\u003A/g, ":")
@@ -57,12 +60,24 @@ function absoluteUrl(value: string, base: string): string | null {
   }
 }
 
+function isObsProductUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    const hostOk =
+      url.hostname === "obsbygg.no" || url.hostname === "www.obsbygg.no";
+    const searchPage = /^\/(?:sok|search)(?:\/|$)/i.test(url.pathname);
+    return hostOk && !searchPage && /\/\d{6,10}\/?$/.test(url.pathname);
+  } catch {
+    return false;
+  }
+}
+
 function imageFromJson(value: unknown): string | null {
   if (typeof value === "string") return value;
   if (Array.isArray(value)) {
-    for (const item of value) {
-      const found = imageFromJson(item);
-      if (found) return found;
+    for (const child of value) {
+      const result = imageFromJson(child);
+      if (result) return result;
     }
   }
   if (value && typeof value === "object") {
@@ -90,9 +105,11 @@ function findProductJson(value: unknown, ean: string): Record<string, unknown> |
   const record = value as Record<string, unknown>;
   const type = record["@type"];
   const types = Array.isArray(type) ? type.map(String) : [String(type ?? "")];
-  const serialized = JSON.stringify(record);
 
-  if (types.some((entry) => entry.toLowerCase() === "product") && serialized.includes(ean)) {
+  if (
+    types.some((entry) => entry.toLowerCase() === "product") &&
+    JSON.stringify(record).includes(ean)
+  ) {
     return record;
   }
 
@@ -106,7 +123,7 @@ function findProductJson(value: unknown, ean: string): Record<string, unknown> |
 
 function metaContent(html: string, property: string): string | null {
   const escaped = property.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const patterns = [
+  const expressions = [
     new RegExp(
       `<meta[^>]+(?:property|name)=["']${escaped}["'][^>]+content=["']([^"']+)["'][^>]*>`,
       "i"
@@ -117,8 +134,8 @@ function metaContent(html: string, property: string): string | null {
     )
   ];
 
-  for (const pattern of patterns) {
-    const value = html.match(pattern)?.[1];
+  for (const expression of expressions) {
+    const value = html.match(expression)?.[1];
     if (value) return decodeHtml(value);
   }
 
@@ -126,7 +143,11 @@ function metaContent(html: string, property: string): string | null {
 }
 
 function parseProductPage(html: string, pageUrl: string, ean: string): ProductInfo | null {
-  if (!html.includes(ean)) return null;
+  const textIncludesEan =
+    html.includes(ean) ||
+    new RegExp(`Art(?:ikkel)?\\s*nr\\.?[^0-9]{0,30}${ean}`, "i").test(html);
+
+  if (!textIncludesEan) return null;
 
   const scripts = [...html.matchAll(
     /<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi
@@ -140,17 +161,18 @@ function parseProductPage(html: string, pageUrl: string, ean: string): ProductIn
 
       const name = String(product.name ?? "").trim();
       const image = imageFromJson(product.image);
-      const url = absoluteUrl(String(product.url ?? pageUrl), pageUrl) ?? pageUrl;
+      const productUrl =
+        absoluteUrl(String(product.url ?? pageUrl), pageUrl) ?? pageUrl;
 
       if (name) {
         return {
           name,
-          productUrl: url,
+          productUrl,
           imageUrl: image ? absoluteUrl(image, pageUrl) : null
         };
       }
     } catch {
-      // Continue with OpenGraph and HTML fallbacks.
+      // Continue to OpenGraph and HTML fallbacks.
     }
   }
 
@@ -171,6 +193,7 @@ function parseProductPage(html: string, pageUrl: string, ean: string): ProductIn
   const image =
     metaContent(html, "og:image") ??
     metaContent(html, "twitter:image") ??
+    html.match(/<img[^>]+(?:src|data-src)=["']([^"']+)["'][^>]+alt=["'][^"']*["']/i)?.[1] ??
     null;
 
   return {
@@ -180,42 +203,7 @@ function parseProductPage(html: string, pageUrl: string, ean: string): ProductIn
   };
 }
 
-function candidateLinks(html: string, baseUrl: string, ean: string): string[] {
-  const normalized = html
-    .replace(/\\u002F/g, "/")
-    .replace(/\\u003A/g, ":")
-    .replace(/\\u0026/g, "&");
-
-  const candidates: Array<{ url: string; score: number }> = [];
-
-  for (const match of normalized.matchAll(/(?:href=|["']url["']\s*:\s*)["']([^"'#]+)["']/gi)) {
-    const raw = match[1];
-    const url = absoluteUrl(raw, baseUrl);
-    if (!url) continue;
-
-    const parsed = new URL(url);
-    if (parsed.hostname !== "www.obsbygg.no" && parsed.hostname !== "obsbygg.no") continue;
-    if (/\/(?:sok|search)(?:\/|\?|$)/i.test(parsed.pathname)) continue;
-    if (/\.(?:js|css|svg|png|jpe?g|webp|woff2?)(?:\?|$)/i.test(parsed.pathname)) continue;
-
-    const position = match.index ?? 0;
-    const context = normalized.slice(Math.max(0, position - 800), position + 1000);
-    const numericProductPath = /\/\d{6,10}(?:\/)?$/.test(parsed.pathname);
-    const score = (context.includes(ean) ? 100 : 0) + (numericProductPath ? 20 : 0);
-
-    if (score > 0) candidates.push({ url, score });
-  }
-
-  return [...new Map(
-    candidates
-      .sort((a, b) => b.score - a.score)
-      .map((candidate) => [candidate.url, candidate])
-  ).values()]
-    .slice(0, 8)
-    .map((candidate) => candidate.url);
-}
-
-async function fetchText(url: string, timeoutMs = 8000): Promise<{
+async function fetchText(url: string, timeoutMs = 10000): Promise<{
   html: string;
   finalUrl: string;
 }> {
@@ -227,54 +215,135 @@ async function fetchText(url: string, timeoutMs = 8000): Promise<{
   });
 
   if (!response.ok) {
-    throw new Error(`Obsbygg svarte med HTTP ${response.status}.`);
+    throw new Error(`HTTP ${response.status}`);
   }
 
-  return {
-    html: await response.text(),
-    finalUrl: response.url || url
-  };
+  return { html: await response.text(), finalUrl: response.url || url };
+}
+
+function linksFromObsSearch(html: string, baseUrl: string, ean: string): string[] {
+  const normalized = html
+    .replace(/\\u002F/g, "/")
+    .replace(/\\u003A/g, ":")
+    .replace(/\\u0026/g, "&");
+
+  const scored: Array<{ url: string; score: number }> = [];
+
+  for (const match of normalized.matchAll(
+    /(?:href=|["'](?:url|href)["']\s*:\s*)["']([^"'#]+)["']/gi
+  )) {
+    const url = absoluteUrl(match[1], baseUrl);
+    if (!url || !isObsProductUrl(url)) continue;
+
+    const index = match.index ?? 0;
+    const context = normalized.slice(Math.max(0, index - 1500), index + 1500);
+    scored.push({
+      url,
+      score: context.includes(ean) ? 100 : 10
+    });
+  }
+
+  return [...new Map(
+    scored
+      .sort((a, b) => b.score - a.score)
+      .map((item) => [item.url, item])
+  ).values()].map((item) => item.url);
+}
+
+function linksFromBingRss(xml: string): string[] {
+  const links = [...xml.matchAll(/<link>(https?:\/\/[^<]+)<\/link>/gi)]
+    .map((match) => decodeHtml(match[1]))
+    .filter(isObsProductUrl);
+  return [...new Set(links)];
+}
+
+function linksFromDuckDuckGo(html: string): string[] {
+  const links: string[] = [];
+
+  for (const match of html.matchAll(/href=["']([^"']+)["']/gi)) {
+    let value = decodeHtml(match[1]);
+
+    try {
+      const url = new URL(value, "https://html.duckduckgo.com");
+      const redirectTarget = url.searchParams.get("uddg");
+      if (redirectTarget) value = decodeURIComponent(redirectTarget);
+    } catch {
+      // Ignore malformed result links.
+    }
+
+    if (isObsProductUrl(value)) links.push(value);
+  }
+
+  return [...new Set(links)];
+}
+
+async function validateCandidates(
+  links: string[],
+  ean: string
+): Promise<ProductInfo | null> {
+  for (const link of links.slice(0, 12)) {
+    try {
+      const page = await fetchText(link);
+      const product = parseProductPage(page.html, page.finalUrl, ean);
+      if (product) return product;
+    } catch {
+      // One failed candidate must not stop the lookup.
+    }
+  }
+
+  return null;
 }
 
 async function lookupProduct(ean: string): Promise<ProductInfo | null> {
-  const searchUrls = [
+  // 1. Obs BYGG's own search. It can be client-rendered, so several parameter
+  // variants are tried and embedded links are extracted.
+  const obsSearchUrls = [
     `https://www.obsbygg.no/sok?q=${encodeURIComponent(ean)}`,
     `https://www.obsbygg.no/sok?query=${encodeURIComponent(ean)}`,
     `https://www.obsbygg.no/search?q=${encodeURIComponent(ean)}`
   ];
 
-  const visited = new Set<string>();
-
-  for (const searchUrl of searchUrls) {
+  for (const searchUrl of obsSearchUrls) {
     try {
-      const search = await fetchText(searchUrl);
-      visited.add(search.finalUrl);
+      const result = await fetchText(searchUrl);
+      const direct = parseProductPage(result.html, result.finalUrl, ean);
+      if (direct && isObsProductUrl(direct.productUrl)) return direct;
 
-      const direct = parseProductPage(search.html, search.finalUrl, ean);
-      if (
-        direct &&
-        !/\/(?:sok|search)(?:\/|\?|$)/i.test(new URL(direct.productUrl).pathname)
-      ) {
-        return direct;
-      }
-
-      const links = candidateLinks(search.html, search.finalUrl, ean);
-
-      for (const link of links) {
-        if (visited.has(link)) continue;
-        visited.add(link);
-
-        try {
-          const page = await fetchText(link);
-          const product = parseProductPage(page.html, page.finalUrl, ean);
-          if (product) return product;
-        } catch {
-          // A single product candidate must never stop the order import.
-        }
-      }
+      const found = await validateCandidates(
+        linksFromObsSearch(result.html, result.finalUrl, ean),
+        ean
+      );
+      if (found) return found;
     } catch {
-      // Try the next known search URL.
+      // Continue with next search strategy.
     }
+  }
+
+  // 2. Bing RSS provides a simple server-readable fallback without JavaScript.
+  try {
+    const query = encodeURIComponent(`site:obsbygg.no "${ean}"`);
+    const result = await fetchText(
+      `https://www.bing.com/search?format=rss&q=${query}`
+    );
+    const found = await validateCandidates(linksFromBingRss(result.html), ean);
+    if (found) return found;
+  } catch {
+    // Continue with DuckDuckGo.
+  }
+
+  // 3. DuckDuckGo HTML is a second no-JavaScript search fallback.
+  try {
+    const query = encodeURIComponent(`site:obsbygg.no "${ean}"`);
+    const result = await fetchText(
+      `https://html.duckduckgo.com/html/?q=${query}`
+    );
+    const found = await validateCandidates(
+      linksFromDuckDuckGo(result.html),
+      ean
+    );
+    if (found) return found;
+  } catch {
+    // No product found.
   }
 
   return null;
@@ -302,7 +371,7 @@ async function copyProductImage(input: {
     },
     redirect: "follow",
     cache: "no-store",
-    signal: AbortSignal.timeout(10000)
+    signal: AbortSignal.timeout(12000)
   });
 
   if (!response.ok) return null;
@@ -311,13 +380,13 @@ async function copyProductImage(input: {
   if (!contentType.startsWith("image/")) return null;
 
   const bytes = await response.arrayBuffer();
-  if (bytes.byteLength === 0 || bytes.byteLength > 10 * 1024 * 1024) return null;
-
-  const extension = extensionFromContentType(contentType);
+  if (bytes.byteLength === 0 || bytes.byteLength > 10 * 1024 * 1024) {
+    return null;
+  }
 
   return uploadPrivateBlob({
     pathnamePrefix: `orders/${input.orderId}/products/${input.ean}`,
-    filename: `product.${extension}`,
+    filename: `product.${extensionFromContentType(contentType)}`,
     body: bytes,
     contentType
   });
@@ -328,7 +397,7 @@ async function enrichOne(
   orderId: string,
   existing?: ExistingItem
 ): Promise<EnrichedOrderItem> {
-  const lookupAt = new Date().toISOString();
+  const productLookupAt = new Date().toISOString();
   const ean = item.articleNumber?.trim();
 
   if (!ean || item.isFreight) {
@@ -337,8 +406,9 @@ async function enrichOne(
       productName: existing?.productName ?? null,
       productUrl: existing?.productUrl ?? null,
       productImageBlob: existing?.productImageBlob ?? null,
+      productImageSourceUrl: existing?.productImageSourceUrl ?? null,
       productLookupStatus: "SKIPPED",
-      productLookupAt: lookupAt
+      productLookupAt
     };
   }
 
@@ -351,8 +421,9 @@ async function enrichOne(
         productName: existing?.productName ?? null,
         productUrl: existing?.productUrl ?? null,
         productImageBlob: existing?.productImageBlob ?? null,
+        productImageSourceUrl: existing?.productImageSourceUrl ?? null,
         productLookupStatus: "NOT_FOUND",
-        productLookupAt: lookupAt
+        productLookupAt
       };
     }
 
@@ -376,8 +447,10 @@ async function enrichOne(
       productName: product.name,
       productUrl: product.productUrl,
       productImageBlob: productImageBlob ?? existing?.productImageBlob ?? null,
+      productImageSourceUrl:
+        product.imageUrl ?? existing?.productImageSourceUrl ?? null,
       productLookupStatus: "FOUND",
-      productLookupAt: lookupAt
+      productLookupAt
     };
   } catch {
     return {
@@ -385,8 +458,9 @@ async function enrichOne(
       productName: existing?.productName ?? null,
       productUrl: existing?.productUrl ?? null,
       productImageBlob: existing?.productImageBlob ?? null,
+      productImageSourceUrl: existing?.productImageSourceUrl ?? null,
       productLookupStatus: "ERROR",
-      productLookupAt: lookupAt
+      productLookupAt
     };
   }
 }
@@ -404,11 +478,9 @@ export async function enrichOrderItems(
 
   const result: EnrichedOrderItem[] = [];
 
-  // Small batches avoid hammering Obsbygg.no and keep the Vercel function stable.
   for (let index = 0; index < items.length; index += 3) {
-    const batch = items.slice(index, index + 3);
     const enriched = await Promise.all(
-      batch.map((item) =>
+      items.slice(index, index + 3).map((item) =>
         enrichOne(
           item,
           orderId,

@@ -2,14 +2,27 @@
 
 import Link from "next/link";
 import {
+  Archive,
+  Bell,
+  CheckSquare,
   ClipboardList,
+  History,
   LayoutDashboard,
   LogIn,
   LogOut,
   Settings,
+  Truck,
   UserCircle2
 } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
+
+const navigation = [
+  { href: "/", label: "Dashboard", icon: LayoutDashboard, exact: true },
+  { href: "/orders", label: "Ordre", icon: ClipboardList },
+  { href: "/dispatch", label: "Til utkjøring", icon: Truck },
+  { href: "/completed", label: "Ferdige ordre", icon: CheckSquare },
+  { href: "/history", label: "Historikk", icon: History }
+];
 
 export function AppHeader({
   user,
@@ -37,27 +50,30 @@ export function AppHeader({
         </Link>
 
         <nav className="main-nav" aria-label="Hovedmeny">
-          <Link
-            className={pathname === "/" ? "nav-link active" : "nav-link"}
-            href="/"
-          >
-            <LayoutDashboard size={19} />
-            <span>Dashboard</span>
-          </Link>
+          {navigation.map((item) => {
+            const active = item.exact
+              ? pathname === "/"
+              : pathname === item.href || pathname.startsWith(`${item.href}/`);
+            const Icon = item.icon;
 
-          <Link
-            className={
-              pathname.startsWith("/orders") ? "nav-link active" : "nav-link"
-            }
-            href="/"
-          >
-            <ClipboardList size={19} />
-            <span>Ordre</span>
-          </Link>
+            return (
+              <Link
+                className={active ? "nav-link active" : "nav-link"}
+                href={item.href}
+                key={item.href}
+              >
+                <Icon size={19} />
+                <span>{item.label}</span>
+              </Link>
+            );
+          })}
         </nav>
 
         <div className="modern-header-actions">
           {children}
+          <span className="header-icon-button" aria-label="Varsler">
+            <Bell size={19} />
+          </span>
 
           {isGuest ? (
             <Link className="header-login-button" href="/login">

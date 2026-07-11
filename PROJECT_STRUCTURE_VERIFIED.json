@@ -1,9 +1,13 @@
 {
   "project": "Hjemleveringordre",
-  "version": "1.3.0",
+  "version": "1.5.0",
   "completeSrcFolder": true,
-  "pdfEngine": "MuPDF",
-  "storage": "Vercel Blob Private",
-  "productEnrichment": "Obsbygg.no lookup at import/reparse only",
-  "design": "Modern Obs BYGG-inspired"
+  "features": [
+    "staged and locked picking workflow",
+    "save and close picking session",
+    "finalize order validation",
+    "item-rich new order notifications",
+    "item-rich completed order notifications",
+    "all V1.4 administration and product features"
+  ]
 }

@@ -4,7 +4,7 @@ import { Resend } from "resend";
 import { adminDb } from "@/lib/firebase/admin";
 import { parseOrderPdf } from "@/lib/orders/parse-order-pdf";
 import { getSuggestedDeliveryDate } from "@/lib/orders/delivery-date";
-import { sendOrderNotification } from "@/lib/notifications";
+import { formatOrderItemsHtml, sendOrderNotification } from "@/lib/notifications";
 import { ensureBootstrapData } from "@/lib/auth";
 import { uploadPrivateBlob } from "@/lib/blob-storage";
 import { enrichOrderItems } from "@/lib/orders/enrich-products";
@@ -66,8 +66,22 @@ export async function POST(request: NextRequest) {
     const emailId = event.data.email_id;
     const documentId = `email-${emailId}`;
     const orderRef = adminDb.collection("orders").doc(documentId);
+    const eventClaimRef = adminDb.collection("inboundEmailClaims").doc(emailId);
+
+    try {
+      await eventClaimRef.create({
+        emailId,
+        messageId: event.data.message_id ?? null,
+        receivedAt: event.data.created_at ?? event.created_at,
+        claimedAt: new Date().toISOString(),
+        status: "PROCESSING"
+      });
+    } catch {
+      return NextResponse.json({ ok: true, duplicate: true, emailId });
+    }
 
     if ((await orderRef.get()).exists) {
+      await eventClaimRef.set({ status: "DUPLICATE" }, { merge: true });
       return NextResponse.json({ ok: true, duplicate: true, emailId });
     }
 
@@ -198,14 +212,26 @@ export async function POST(request: NextRequest) {
     });
 
     await sendOrderNotification({
+      event: "NEW_ORDER",
       subject: `Ny hjemlevering: ${title}`,
       html: `
-        <h2>${title}</h2>
-        <p>En ny hjemlevering er registrert.</p>
-        <p>Leveringsdato: <strong>${deliveryDate}</strong></p>
-        <p>Antall varelinjer: <strong>${parsed?.items.length ?? 0}</strong></p>
+        <div style="font-family:Arial,sans-serif;color:#071a3a;max-width:680px;">
+          <h2 style="color:#002b67;">${title}</h2>
+          <p>En ny hjemlevering er registrert.</p>
+          <p>
+            Leveringsdato: <strong>${deliveryDate}</strong><br/>
+            Antall varelinjer: <strong>${enrichedItems.length}</strong>
+          </p>
+          <h3 style="margin-bottom:6px;">Dette skal plukkes</h3>
+          ${formatOrderItemsHtml(enrichedItems)}
+        </div>
       `
     });
+
+    await eventClaimRef.set(
+      { status: "PROCESSED", orderId: documentId, processedAt: new Date().toISOString() },
+      { merge: true }
+    );
 
     return NextResponse.json({
       ok: true,

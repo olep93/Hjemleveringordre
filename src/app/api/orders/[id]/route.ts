@@ -2,7 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { adminDb } from "@/lib/firebase/admin";
 import { requireRole, requireUser } from "@/lib/auth";
-import { sendOrderNotification } from "@/lib/notifications";
+import {
+  formatOrderItemsHtml,
+  sendOrderNotification
+} from "@/lib/notifications";
 import { parseOrderPdf } from "@/lib/orders/parse-order-pdf";
 import { enrichOrderItems } from "@/lib/orders/enrich-products";
 import {
@@ -21,11 +24,24 @@ type BlobReference = {
   contentType?: string;
 };
 
+type OrderItem = {
+  id?: string;
+  description?: string;
+  productName?: string | null;
+  articleNumber?: string | null;
+  quantity?: number;
+  unit?: string | null;
+  checked?: boolean;
+  checkedBy?: string | null;
+  checkedAt?: string | null;
+  isFreight?: boolean;
+  productImageBlob?: BlobReference | null;
+};
+
 function buildTitle(orderNumber?: string | null, customerName?: string | null) {
   if (orderNumber && customerName) {
     return `Kundeordre ${orderNumber} – ${customerName}`;
   }
-
   if (orderNumber) return `Kundeordre ${orderNumber}`;
   if (customerName) return `Hjemlevering – ${customerName}`;
   return "Ny ordre – må kontrolleres";
@@ -34,6 +50,34 @@ function buildTitle(orderNumber?: string | null, customerName?: string | null) {
 function fileUrl(blob?: BlobReference | null): string | null {
   if (!blob?.pathname) return null;
   return privateFileRouteUrl(blob.pathname, blob.filename);
+}
+
+function applyItemChecks(
+  originalItems: OrderItem[],
+  checks: Array<{ id: string; checked: boolean }> | undefined,
+  actorName: string
+): OrderItem[] {
+  if (!Array.isArray(checks)) return originalItems;
+
+  const checkMap = new Map(checks.map((entry) => [entry.id, entry.checked]));
+
+  return originalItems.map((item) => {
+    if (!item.id || item.isFreight || !checkMap.has(item.id)) return item;
+
+    const checked = Boolean(checkMap.get(item.id));
+    const changed = checked !== Boolean(item.checked);
+
+    return {
+      ...item,
+      checked,
+      checkedBy: checked ? actorName : null,
+      checkedAt: checked
+        ? changed
+          ? new Date().toISOString()
+          : item.checkedAt ?? new Date().toISOString()
+        : null
+    };
+  });
 }
 
 export async function GET(
@@ -71,6 +115,7 @@ export async function GET(
       (
         item: Record<string, unknown> & {
           productImageBlob?: BlobReference | null;
+          productImageSourceUrl?: string | null;
         }
       ) => ({
         ...item,
@@ -79,7 +124,11 @@ export async function GET(
               item.productImageBlob.pathname,
               item.productImageBlob.filename
             )
-          : null
+          : typeof item.productImageSourceUrl === "string"
+            ? `/api/product-image?url=${encodeURIComponent(
+                item.productImageSourceUrl
+              )}`
+            : null
       })
     );
 
@@ -98,7 +147,6 @@ export async function GET(
         photos,
         events: eventsSnapshot.docs.map((doc) => {
           const event = doc.data();
-
           return {
             id: doc.id,
             ...event,
@@ -135,6 +183,8 @@ export async function PATCH(
       orderNumber?: string | null;
       customerName?: string | null;
       phone?: string | null;
+      itemChecks?: Array<{ id: string; checked: boolean }>;
+      pickingSessionEnded?: boolean;
     };
 
     const actorName = body.actorName?.trim() || "Ukjent";
@@ -146,32 +196,42 @@ export async function PATCH(
     }
 
     const current = snapshot.data()!;
-    const items = Array.isArray(current.items) ? current.items : [];
+    const currentItems: OrderItem[] = Array.isArray(current.items)
+      ? current.items
+      : [];
+    const nextItems = applyItemChecks(
+      currentItems,
+      body.itemChecks,
+      actorName
+    );
     const photos = Array.isArray(current.photos) ? current.photos : [];
+    const placement =
+      "placement" in body ? body.placement?.trim() || null : current.placement ?? null;
 
-    const incompleteItems = items.filter(
-      (item: { checked?: boolean; isFreight?: boolean }) =>
-        !item.checked && !item.isFreight
+    const incompleteItems = nextItems.filter(
+      (item) => !item.checked && !item.isFreight
     );
 
     if (body.status === "READY_FOR_LOADING") {
       if (incompleteItems.length > 0) {
         return NextResponse.json(
-          { error: "Alle plukkbare varelinjer må være krysset av først." },
+          {
+            error: `${incompleteItems.length} varelinje(r) er ikke markert plukket.`
+          },
           { status: 400 }
         );
       }
 
-      if (!body.placement) {
+      if (!placement) {
         return NextResponse.json(
-          { error: "Velg plassering før ordren settes klar for lasting." },
+          { error: "Velg hvor ordren er plassert før den ferdigstilles." },
           { status: 400 }
         );
       }
 
       if (photos.length === 0) {
         return NextResponse.json(
-          { error: "Last opp minst ett bilde av ferdig ordre først." },
+          { error: "Last opp minst ett bilde av ferdig ordre før den ferdigstilles." },
           { status: 400 }
         );
       }
@@ -192,8 +252,9 @@ export async function PATCH(
       title: buildTitle(newOrderNumber, newCustomerName)
     };
 
+    if (Array.isArray(body.itemChecks)) update.items = nextItems;
     if (body.status) update.status = body.status;
-    if ("placement" in body) update.placement = body.placement || null;
+    if ("placement" in body) update.placement = placement;
     if ("deliveryDate" in body) update.deliveryDate = body.deliveryDate || null;
     if ("comment" in body) update.comment = body.comment || null;
     if ("orderNumber" in body) update.orderNumber = newOrderNumber;
@@ -202,41 +263,97 @@ export async function PATCH(
 
     if (body.status === "PICKING") {
       update.pickedBy = actorName;
-      update.pickingStartedAt = FieldValue.serverTimestamp();
+      update.pickingStartedAt =
+        current.pickingStartedAt ?? FieldValue.serverTimestamp();
+      update.pickingSessionOpen = !body.pickingSessionEnded;
+    }
+
+    if (body.pickingSessionEnded) {
+      update.pickingSessionOpen = false;
+      update.lastPickingSavedAt = FieldValue.serverTimestamp();
+      update.lastPickingSavedBy = actorName;
     }
 
     if (body.status === "READY_FOR_LOADING") {
       update.pickedBy = actorName;
       update.pickedAt = FieldValue.serverTimestamp();
+      update.pickingSessionOpen = false;
     }
 
     await ref.update(update);
 
+    const latestSnapshot = await ref.get();
+    const latest = latestSnapshot.data()!;
+
     if (body.status === "READY_FOR_LOADING") {
-      const latest = (await ref.get()).data()!;
+      await sendOrderNotification({
+        event: "READY_FOR_LOADING",
+        subject: `${latest.title ?? "Ordre"} er ferdig plukket`,
+        html: `
+          <div style="font-family:Arial,sans-serif;color:#071a3a;max-width:680px;">
+            <h2 style="color:#002b67;">${latest.title ?? "Hjemlevering"}</h2>
+            <p>Ordren er ferdig plukket av <strong>${actorName}</strong>.</p>
+            <p>
+              Plassering: <strong>${latest.placement ?? "Ikke valgt"}</strong><br/>
+              Leveringsdato: <strong>${latest.deliveryDate ?? "Ikke satt"}</strong>
+            </p>
+            <h3 style="margin-bottom:6px;">Ferdig plukket</h3>
+            ${formatOrderItemsHtml(latest.items)}
+          </div>
+        `
+      });
+    }
+
+    if (body.status === "LOADED" || body.status === "DELIVERED") {
+      const event = body.status === "LOADED" ? "LOADED" : "DELIVERED";
 
       await sendOrderNotification({
-        subject: `${latest.title ?? "Ordre"} er klar for lasting`,
+        event,
+        subject:
+          body.status === "LOADED"
+            ? `${latest.title ?? "Ordre"} er lastet på bil`
+            : `${latest.title ?? "Ordre"} er levert`,
         html: `
-          <h2>${latest.title ?? "Hjemlevering"}</h2>
-          <p>Ordren er ferdig plukket av <strong>${actorName}</strong>.</p>
-          <p>Plassering: <strong>${latest.placement ?? "Ikke valgt"}</strong></p>
-          <p>Leveringsdato: <strong>${latest.deliveryDate ?? "Ikke satt"}</strong></p>
+          <div style="font-family:Arial,sans-serif;color:#071a3a;max-width:680px;">
+            <h2 style="color:#002b67;">${latest.title ?? "Hjemlevering"}</h2>
+            <p>Status: <strong>${
+              body.status === "LOADED" ? "Lastet på bil" : "Levert"
+            }</strong></p>
+            <p>Registrert av: <strong>${actorName}</strong></p>
+            ${formatOrderItemsHtml(latest.items)}
+          </div>
         `
       });
     }
 
     await ref.collection("events").add({
-      type: body.status ? "STATUS_CHANGED" : "ORDER_UPDATED",
-      description: body.status
-        ? `Status endret til ${body.status} av ${actorName}.`
-        : `Ordren ble oppdatert av ${actorName}.`,
+      type:
+        body.status === "READY_FOR_LOADING"
+          ? "ORDER_COMPLETED"
+          : body.pickingSessionEnded
+            ? "PICKING_SAVED"
+            : body.status
+              ? "STATUS_CHANGED"
+              : "ORDER_UPDATED",
+      description:
+        body.status === "READY_FOR_LOADING"
+          ? `Ordren ble ferdigstilt av ${actorName}.`
+          : body.pickingSessionEnded
+            ? `Plukkingen ble lagret og lukket av ${actorName}.`
+            : body.status === "PICKING"
+              ? `Plukking startet av ${actorName}.`
+              : body.status
+                ? `Status endret til ${body.status} av ${actorName}.`
+                : `Ordren ble oppdatert av ${actorName}.`,
       actorType: "USER",
       actorName,
       createdAt: FieldValue.serverTimestamp()
     });
 
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({
+      ok: true,
+      incompleteItems: incompleteItems.length
+    });
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Kunne ikke oppdatere ordre.";
@@ -286,7 +403,7 @@ export async function POST(
       return NextResponse.json(
         {
           error:
-            "Denne eldre ordren ligger i Firebase Storage. Slett den og send PDF-en på nytt for å flytte den til Vercel Blob."
+            "Denne eldre ordren ligger i Firebase Storage. Slett den og send PDF-en på nytt."
         },
         { status: 400 }
       );
@@ -305,11 +422,7 @@ export async function POST(
     const orderNumber = parsed.orderNumber ?? data.orderNumber ?? null;
     const customerName = parsed.customerName ?? data.customerName ?? null;
     const existingItems = Array.isArray(data.items) ? data.items : [];
-    const enrichedItems = await enrichOrderItems(
-      parsed.items,
-      id,
-      existingItems
-    );
+    const enrichedItems = await enrichOrderItems(parsed.items, id, existingItems);
 
     await ref.update({
       orderNumber,
@@ -334,7 +447,7 @@ export async function POST(
 
     await ref.collection("events").add({
       type: "ORDER_REPARSED",
-      description: `Originaldokumentet ble tolket på nytt av ${
+      description: `Originaldokument og produktinformasjon ble oppdatert av ${
         body.actorName?.trim() || "Ukjent"
       }.`,
       actorType: "USER",
@@ -398,10 +511,7 @@ export async function DELETE(
         )
       ]);
     } catch (blobError) {
-      console.warn(
-        "Blob-filer kunne ikke slettes. Firestore-ordren slettes likevel:",
-        blobError
-      );
+      console.warn("Blob-filer kunne ikke slettes:", blobError);
     }
 
     await adminDb.recursiveDelete(ref);
@@ -413,8 +523,6 @@ export async function DELETE(
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Kunne ikke slette ordren.";
-
-    console.error("Delete order failed:", error);
 
     return NextResponse.json(
       { error: message },

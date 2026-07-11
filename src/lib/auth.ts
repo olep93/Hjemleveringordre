@@ -80,6 +80,7 @@ export async function ensureBootstrapData(): Promise<void> {
     await notificationRef.set({
       email: "ole.kristiansen@coop.no",
       active: true,
+      events: ["NEW_ORDER", "READY_FOR_LOADING", "LOADED", "DELIVERED"],
       createdAt: new Date().toISOString()
     });
   }
