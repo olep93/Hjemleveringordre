@@ -1,13 +1,13 @@
 {
   "project": "Hjemleveringordre",
-  "version": "1.5.0",
+  "version": "1.7.0",
   "completeSrcFolder": true,
+  "includesAllFrom": "1.6.0",
   "features": [
-    "staged and locked picking workflow",
-    "save and close picking session",
-    "finalize order validation",
-    "item-rich new order notifications",
-    "item-rich completed order notifications",
-    "all V1.4 administration and product features"
+    "five-second validation toast",
+    "automatic scroll to first missing field",
+    "red placement validation",
+    "red photo validation",
+    "red incomplete item rows"
   ]
 }

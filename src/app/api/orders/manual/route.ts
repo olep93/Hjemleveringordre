@@ -26,6 +26,8 @@ export async function POST(request: NextRequest) {
     let orderNumber = String(form.get("orderNumber") ?? "").trim() || null;
     let customerName = String(form.get("customerName") ?? "").trim() || null;
     let phone = String(form.get("phone") ?? "").trim() || null;
+    let deliveryAddress =
+      String(form.get("deliveryAddress") ?? "").trim() || null;
     let orderDate: string | null = null;
     let seller: string | null = null;
     let rawExtractedText: string | null = null;
@@ -62,6 +64,7 @@ export async function POST(request: NextRequest) {
           orderNumber = orderNumber ?? parsed.orderNumber;
           customerName = customerName ?? parsed.customerName;
           phone = phone ?? parsed.phone;
+          deliveryAddress = deliveryAddress ?? parsed.deliveryAddress;
           orderDate = parsed.orderDate;
           seller = parsed.seller;
           rawExtractedText = parsed.rawText;
@@ -91,6 +94,7 @@ export async function POST(request: NextRequest) {
       orderNumber,
       customerName,
       phone,
+      deliveryAddress,
       orderDate,
       deliveryDate,
       seller,

@@ -20,6 +20,7 @@ export type ParsedOrder = {
   orderNumber: string | null;
   customerName: string | null;
   phone: string | null;
+  deliveryAddress: string | null;
   orderDate: string | null;
   seller: string | null;
   items: ParsedOrderItem[];
@@ -33,7 +34,7 @@ type PositionedText = {
   y: number;
 };
 
-const PARSER_VERSION = "obsbygg-mupdf-coordinates-v6";
+const PARSER_VERSION = "obsbygg-mupdf-coordinates-v7-address-phone";
 
 function clean(value?: string | null): string {
   return String(value ?? "")
@@ -204,20 +205,90 @@ function extractCustomerName(rows: string[], text: string): string | null {
   );
 }
 
-function extractPhone(rows: string[], text: string): string | null {
-  const source =
-    rows.find((row) => /\bMobiltelefon:/i.test(row)) ??
-    text.match(/\bMobiltelefon:\s*([^\r\n]+)/i)?.[0] ??
-    "";
+function valueAfterLabel(
+  rows: string[],
+  label: RegExp,
+  stop: RegExp,
+  maxFollowingRows = 2
+): string[] {
+  const result: string[] = [];
 
-  const raw = clean(source.replace(/^.*?Mobiltelefon:\s*/i, ""));
+  for (let index = 0; index < rows.length; index++) {
+    const row = rows[index];
+    if (!label.test(row)) continue;
 
-  if (!raw || /telefonnummer|mangler|ikke registrert/i.test(raw)) {
-    return null;
+    const inline = clean(row.replace(label, ""));
+    if (inline) result.push(inline);
+
+    for (
+      let following = index + 1;
+      following < rows.length &&
+      following <= index + maxFollowingRows;
+      following++
+    ) {
+      const candidate = clean(rows[following]);
+      if (!candidate || stop.test(candidate)) break;
+      result.push(candidate);
+    }
+
+    break;
   }
 
-  const phone = raw.replace(/[^\d+]/g, "");
-  return phone.length >= 6 ? phone : null;
+  return result;
+}
+
+function extractPhone(rows: string[], text: string): string | null {
+  const candidates = valueAfterLabel(
+    rows,
+    /^.*?\bMobil(?:telefon)?\s*:\s*/i,
+    /^(?:Selger|EAN\/PLU|Varetekst|Kommentar|SUM|TOTALSUM)\b/i,
+    2
+  );
+
+  if (candidates.length === 0) {
+    const textMatch = text.match(
+      /\bMobil(?:telefon)?\s*:\s*(?:\r?\n\s*)?([+()\d][+()\d .-]{5,})/i
+    );
+    if (textMatch?.[1]) candidates.push(textMatch[1]);
+  }
+
+  for (const candidate of candidates) {
+    const raw = clean(candidate);
+    if (!raw || /telefonnummer|mangler|ikke registrert/i.test(raw)) continue;
+
+    const digits = raw.replace(/\D/g, "");
+    if (digits.length >= 8 && digits.length <= 15) {
+      return raw.startsWith("+") ? `+${digits}` : digits;
+    }
+  }
+
+  return null;
+}
+
+function extractDeliveryAddress(rows: string[], text: string): string | null {
+  const lines = valueAfterLabel(
+    rows,
+    /^.*?\bLeveringsadr(?:esse)?\.?\s*:\s*/i,
+    /^(?:Mobil(?:telefon)?|Selger|EAN\/PLU|Varetekst|Kommentar|SUM|TOTALSUM)\b/i,
+    3
+  )
+    .map(clean)
+    .filter(Boolean);
+
+  if (lines.length > 0) {
+    return [...new Set(lines)].join(", ");
+  }
+
+  const match = text.match(
+    /\bLeveringsadr(?:esse)?\.?\s*:\s*([^\r\n]+)(?:\r?\n\s*([0-9]{4}\s+[^\r\n]+))?/i
+  );
+
+  if (!match) return null;
+
+  return [match[1], match[2]]
+    .map(clean)
+    .filter(Boolean)
+    .join(", ") || null;
 }
 
 function extractOrderDate(text: string): string | null {
@@ -389,6 +460,7 @@ export async function parseOrderPdf(buffer: Buffer): Promise<ParsedOrder> {
     orderNumber: extractOrderNumber(rawText),
     customerName: extractCustomerName(rows, rawText),
     phone: extractPhone(rows, rawText),
+    deliveryAddress: extractDeliveryAddress(rows, rawText),
     orderDate: extractOrderDate(rawText),
     seller: extractSeller(rows, rawText),
     items: deduplicate([...rowItems, ...fallbackItems]),

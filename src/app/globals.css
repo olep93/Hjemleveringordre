@@ -1401,3 +1401,165 @@ html, body {
   .picking-session-actions { grid-template-columns: 1fr; }
   .finalize-action { min-width: 0; }
 }
+
+
+/* V1.6 address display and automatic photo upload */
+.address-summary-cell {
+  grid-column: 1 / -1;
+}
+
+.auto-photo-upload {
+  display: grid;
+  gap: 8px;
+}
+
+.auto-photo-upload label {
+  position: relative;
+  width: fit-content;
+  cursor: pointer;
+}
+
+.auto-photo-upload label.disabled {
+  opacity: .65;
+  cursor: wait;
+  pointer-events: none;
+}
+
+.auto-photo-upload input[type="file"] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.auto-photo-upload p {
+  margin: 0;
+  color: var(--obs-muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+@media (max-width: 760px) {
+  .auto-photo-upload label {
+    width: 100%;
+  }
+}
+
+
+/* V1.7 graphical completion validation */
+.validation-toast {
+  position: fixed;
+  top: 98px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 120;
+  width: min(760px, calc(100% - 28px));
+  min-height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 15px 17px;
+  border: 1px solid #f04438;
+  border-left: 6px solid #d92d20;
+  border-radius: 14px;
+  background: #fff4f2;
+  color: #8f1d18;
+  box-shadow: 0 14px 40px rgba(144, 29, 24, .2);
+  animation: validationToastIn .22s ease-out;
+}
+
+.validation-toast > div {
+  display: grid;
+  gap: 4px;
+}
+
+.validation-toast strong {
+  color: #b42318;
+  font-size: 15px;
+}
+
+.validation-toast span {
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.4;
+}
+
+.validation-toast button {
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 10px;
+  background: rgba(217, 45, 32, .09);
+  color: #b42318;
+}
+
+.validation-error-field {
+  padding: 10px;
+  margin: -10px;
+  border: 2px solid #f04438;
+  border-radius: 13px;
+  background: #fff7f6;
+}
+
+.validation-error-field select,
+.validation-error-field input,
+.validation-error-field textarea {
+  border-color: #f04438 !important;
+  box-shadow: 0 0 0 4px rgba(240, 68, 56, .1) !important;
+}
+
+.validation-error-block {
+  border: 2px solid #f04438 !important;
+  background: #fff7f6 !important;
+  box-shadow: 0 0 0 4px rgba(240, 68, 56, .08);
+}
+
+.validation-error-item {
+  position: relative;
+  background: #fff5f4 !important;
+  box-shadow: inset 5px 0 0 #f04438;
+}
+
+.validation-error-item::after {
+  content: "Mangler avhuking";
+  position: absolute;
+  right: 16px;
+  top: 12px;
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: #fee4e2;
+  color: #b42318;
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: .03em;
+}
+
+@keyframes validationToastIn {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -12px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+@media (max-width: 760px) {
+  .validation-toast {
+    top: 80px;
+    align-items: flex-start;
+  }
+
+  .validation-error-item::after {
+    right: 10px;
+    top: 8px;
+  }
+}

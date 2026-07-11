@@ -428,6 +428,8 @@ export async function POST(
       orderNumber,
       customerName,
       phone: parsed.phone ?? data.phone ?? null,
+      deliveryAddress:
+        parsed.deliveryAddress ?? data.deliveryAddress ?? null,
       orderDate: parsed.orderDate ?? data.orderDate ?? null,
       seller: parsed.seller ?? data.seller ?? null,
       items: enrichedItems.length > 0 ? enrichedItems : data.items ?? [],

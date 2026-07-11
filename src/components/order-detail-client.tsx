@@ -24,7 +24,7 @@ import {
   UserRound,
   X
 } from "lucide-react";
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, useCallback, useEffect, useMemo, useState } from "react";
 
 type BlobReference = {
   pathname?: string;
@@ -53,6 +53,7 @@ type Order = {
   orderNumber?: string | null;
   customerName?: string | null;
   phone?: string | null;
+  deliveryAddress?: string | null;
   deliveryDate?: string | null;
   createdAt?: string | null;
   status: string;
@@ -130,6 +131,12 @@ export default function OrderPage({
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [validationMessage, setValidationMessage] = useState<string | null>(null);
+  const [validationErrors, setValidationErrors] = useState<{
+    placement?: boolean;
+    photo?: boolean;
+    items?: string[];
+  }>({});
 
   const canEdit = initialUser.role !== "GUEST";
   const canDelete =
@@ -230,8 +237,78 @@ export default function OrderPage({
       }));
   }
 
+  function clearValidationFeedback() {
+    setValidationMessage(null);
+    setValidationErrors({});
+  }
+
+  function showValidationFeedback(
+    message: string,
+    errors: {
+      placement?: boolean;
+      photo?: boolean;
+      items?: string[];
+    }
+  ) {
+    setValidationMessage(message);
+    setValidationErrors(errors);
+
+    window.setTimeout(() => {
+      setValidationMessage(null);
+    }, 5000);
+
+    window.requestAnimationFrame(() => {
+      document
+        .querySelector("[data-validation-error='true']")
+        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  }
+
+  function validateBeforeFinalize(): boolean {
+    if (!order) return false;
+
+    const missingItemIds = (order.items ?? [])
+      .filter(
+        (item) =>
+          !item.isFreight &&
+          !Boolean(draftChecks[item.id])
+      )
+      .map((item) => item.id);
+
+    const missingPlacement = !placement.trim();
+    const missingPhoto = (order.photos ?? []).length === 0;
+
+    const missing: string[] = [];
+    if (missingItemIds.length > 0) {
+      missing.push(
+        `${missingItemIds.length} varelinje${
+          missingItemIds.length === 1 ? "" : "r"
+        } er ikke markert plukket`
+      );
+    }
+    if (missingPlacement) missing.push("plassering er ikke valgt");
+    if (missingPhoto) missing.push("bilde av ferdig ordre mangler");
+
+    if (missing.length === 0) {
+      clearValidationFeedback();
+      return true;
+    }
+
+    showValidationFeedback(
+      `Ordren kan ikke ferdigstilles: ${missing.join(", ")}.`,
+      {
+        placement: missingPlacement,
+        photo: missingPhoto,
+        items: missingItemIds
+      }
+    );
+
+    return false;
+  }
+
   async function savePicking(finalize: boolean) {
     if (!order || !actorName) return;
+    if (finalize && !validateBeforeFinalize()) return;
 
     setSaving(true);
     setError(null);
@@ -257,6 +334,7 @@ export default function OrderPage({
         throw new Error(result.error ?? "Kunne ikke lagre plukkingen.");
       }
 
+      clearValidationFeedback();
       setPickingMode(false);
       setInfo(
         finalize
@@ -265,11 +343,27 @@ export default function OrderPage({
       );
       await load();
     } catch (saveError) {
-      setError(
+      const message =
         saveError instanceof Error
           ? saveError.message
-          : "Kunne ikke lagre plukkingen."
-      );
+          : "Kunne ikke lagre plukkingen.";
+
+      const lower = message.toLowerCase();
+      showValidationFeedback(message, {
+        placement: lower.includes("plassering"),
+        photo: lower.includes("bilde"),
+        items:
+          lower.includes("varelinje") || lower.includes("plukket")
+            ? (order.items ?? [])
+                .filter(
+                  (item) =>
+                    !item.isFreight &&
+                    !Boolean(draftChecks[item.id])
+                )
+                .map((item) => item.id)
+            : []
+      });
+      setError(null);
     } finally {
       setSaving(false);
     }
@@ -341,33 +435,59 @@ export default function OrderPage({
     }
   }
 
-  async function uploadPhoto(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function uploadSelectedPhotos(
+    event: ChangeEvent<HTMLInputElement>
+  ) {
     if (!pickingMode) return;
 
-    const formElement = event.currentTarget;
-    const form = new FormData(formElement);
-    form.set("uploadedBy", actorName);
+    const input = event.currentTarget;
+    const files = Array.from(input.files ?? []);
+    if (files.length === 0) return;
+
     setSaving(true);
+    setError(null);
+    setInfo(
+      files.length === 1
+        ? "Laster opp bildet …"
+        : `Laster opp ${files.length} bilder …`
+    );
 
     try {
-      const response = await fetch(`/api/orders/${id}/photos`, {
-        method: "POST",
-        body: form
-      });
-      const result = await response.json();
-      if (!response.ok) {
-        throw new Error(result.error ?? "Kunne ikke laste opp bilde.");
+      for (const file of files) {
+        const form = new FormData();
+        form.set("file", file);
+        form.set("uploadedBy", actorName);
+
+        const response = await fetch(`/api/orders/${id}/photos`, {
+          method: "POST",
+          body: form
+        });
+        const result = await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            result.error ?? `Kunne ikke laste opp ${file.name}.`
+          );
+        }
       }
-      formElement.reset();
-      setInfo("Bildet er lastet opp.");
+
+      input.value = "";
+      setValidationErrors((current) => ({
+        ...current,
+        photo: false
+      }));
+      setInfo(
+        files.length === 1
+          ? "Bildet er lastet opp."
+          : `${files.length} bilder er lastet opp.`
+      );
       await load();
       setPickingMode(true);
     } catch (uploadError) {
       setError(
         uploadError instanceof Error
           ? uploadError.message
-          : "Kunne ikke laste opp bilde."
+          : "Kunne ikke laste opp bildet."
       );
     } finally {
       setSaving(false);
@@ -412,6 +532,22 @@ export default function OrderPage({
   return (
     <main>
       <AppHeader user={initialUser} />
+
+      {validationMessage && (
+        <div className="validation-toast" role="alert" aria-live="assertive">
+          <div>
+            <strong>Kan ikke ferdigstille ordren</strong>
+            <span>{validationMessage}</span>
+          </div>
+          <button
+            type="button"
+            aria-label="Lukk feilmelding"
+            onClick={() => setValidationMessage(null)}
+          >
+            <X size={18} />
+          </button>
+        </div>
+      )}
 
       <section className="modern-order-page">
         <div className="order-titlebar">
@@ -516,6 +652,10 @@ export default function OrderPage({
                 <span>Telefon</span>
                 <strong>{order.phone ?? "Ikke registrert"}</strong>
               </div>
+              <div className="address-summary-cell">
+                <span>Leveringsadresse</span>
+                <strong>{order.deliveryAddress ?? "Ikke registrert"}</strong>
+              </div>
               <div>
                 <span>Leveringsdato</span>
                 <strong>{deliveryDate || "Ikke satt"}</strong>
@@ -541,13 +681,22 @@ export default function OrderPage({
                   />
                 </label>
 
-                <label>
+                <label
+                  className={validationErrors.placement ? "validation-error-field" : ""}
+                  data-validation-error={validationErrors.placement ? "true" : undefined}
+                >
                   Plassering av ferdig ordre
                   <div className="input-with-icon">
                     <MapPin size={17} />
                     <select
                       value={placement}
-                      onChange={(event) => setPlacement(event.target.value)}
+                      onChange={(event) => {
+                        setPlacement(event.target.value);
+                        setValidationErrors((current) => ({
+                          ...current,
+                          placement: false
+                        }));
+                      }}
                     >
                       <option value="">Velg plassering</option>
                       <option>Utvendig betong</option>
@@ -567,20 +716,31 @@ export default function OrderPage({
                   />
                 </label>
 
-                <div className="full picking-photo-block">
+                <div
+                  className={`full picking-photo-block ${
+                    validationErrors.photo ? "validation-error-block" : ""
+                  }`}
+                  data-validation-error={validationErrors.photo ? "true" : undefined}
+                >
                   <h3><Camera size={18} /> Bilde av ferdig ordre</h3>
-                  <form className="modern-photo-form" onSubmit={uploadPhoto}>
-                    <input
-                      name="file"
-                      type="file"
-                      accept="image/*"
-                      capture="environment"
-                      required
-                    />
-                    <button className="outline-action" disabled={saving}>
-                      <Camera size={18} /> Last opp
-                    </button>
-                  </form>
+                  <div className="auto-photo-upload">
+                    <label className={saving ? "outline-action disabled" : "outline-action"}>
+                      <Camera size={18} />
+                      {saving ? "Laster opp …" : "Velg eller ta bilder"}
+                      <input
+                        name="file"
+                        type="file"
+                        accept="image/*"
+                        capture="environment"
+                        multiple
+                        disabled={saving}
+                        onChange={(event) => void uploadSelectedPhotos(event)}
+                      />
+                    </label>
+                    <p>
+                      Bildene lastes opp automatisk med én gang de er valgt.
+                    </p>
+                  </div>
 
                   {(order.photos ?? []).length > 0 && (
                     <div className="photo-grid compact-photos">
@@ -681,19 +841,34 @@ export default function OrderPage({
 
                   return (
                     <article
-                      className={`modern-product-row ${checked ? "checked" : ""}`}
+                      className={`modern-product-row ${checked ? "checked" : ""} ${
+                        validationErrors.items?.includes(item.id)
+                          ? "validation-error-item"
+                          : ""
+                      }`}
+                      data-validation-error={
+                        validationErrors.items?.includes(item.id)
+                          ? "true"
+                          : undefined
+                      }
                       key={item.id}
                     >
                       {pickingMode && !item.isFreight ? (
                         <button
                           className="product-checkbox"
                           type="button"
-                          onClick={() =>
+                          onClick={() => {
                             setDraftChecks((current) => ({
                               ...current,
                               [item.id]: !current[item.id]
-                            }))
-                          }
+                            }));
+                            setValidationErrors((current) => ({
+                              ...current,
+                              items: (current.items ?? []).filter(
+                                (id) => id !== item.id
+                              )
+                            }));
+                          }}
                           aria-label={
                             checked
                               ? "Marker som ikke plukket"

@@ -1,65 +1,45 @@
-# Hjemleveringordre V1.5 – ny plukkeflyt
+# Hjemleveringordre V1.7 – grafisk validering ved ferdigstilling
 
-Dette er en komplett pakke som inkluderer alt fra V1.4, pluss en helt ny
-plukkeopplevelse.
+Dette er en komplett pakke som inkluderer alt fra V1.6.
 
-## Ny plukkeflyt
+## Ny grafisk bekreftelse ved mangler
 
-Når en ordre åpnes er den låst og ryddig:
+Når brukeren trykker **Ferdigstill ordre**, kontrollerer appen:
 
-- varelinjene vises, men kan ikke hukes av
-- plassering og plukkekommentar er skjult
-- bildeopplasting er skjult
-- bare relevante hovedvalg vises
+- at alle plukkbare varelinjer er huket av
+- at plassering er valgt
+- at minst ett bilde er lastet opp
 
-Når brukeren trykker «Start plukking» eller «Fortsett plukking»:
+Dersom noe mangler:
 
-- avhuking åpnes
-- leveringsdato og plassering kan endres
-- kommentar kan registreres
-- bilde av ferdig ordre kan lastes opp
+1. en tydelig rød feilmelding vises øverst på skjermen
+2. meldingen forsvinner automatisk etter fem sekunder
+3. appen ruller til første felt som mangler
+4. manglende plassering får rødt felt
+5. bildeområdet får rød ramme dersom bilde mangler
+6. hver varelinje som ikke er huket av får rød bakgrunn og merket
+   **Mangler avhuking**
 
-Brukeren avslutter med:
+Den røde markeringen fjernes fortløpende når brukeren retter mangelen.
 
-- «Lagre og avslutt»:
-  lagrer fremdriften og låser ordren igjen
-- «Ferdigstill ordre»:
-  krever alle varelinjer, plassering og minst ett bilde, og flytter ordren til
-  «Til utkjøring»
+## Alt fra V1.6 er inkludert
 
-Knappen heter ikke lenger «Klar for lasting» i selve plukkeflyten.
-
-## E-postvarsler
-
-Både varsel om ny ordre og varsel om ferdig plukket ordre inneholder nå en
-oversikt med:
-
-- produktnavn / ordretekst
-- EAN når tilgjengelig
-- antall
-- enhet
-
-Varsler for «Lastet på bil» og «Levert» inneholder også vareoversikten.
-
-## Alt fra V1.4 er med
-
-- moderne Obs BYGG-design og faner
-- produktnavn og produktbilder fra Obsbygg.no
-- Vercel Blob
-- PDF-tolking med MuPDF
-- brukeradministrasjon
-- roller og passordreset
-- redigerbare varslingsmottakere
-- testknapper for varsling
-- beskyttelse mot duplikate innkommende e-poster
-- Dashboard, Ordre, Til utkjøring, Ferdige ordre og Historikk
+- telefonnummer fra PDF
+- leveringsadresse fra PDF
+- automatisk opplasting når bilde velges
+- plukkemodus med Lagre og avslutt / Ferdigstill ordre
+- varelinjer og antall i e-postvarsler
+- produktbilder og produktnavn
+- brukeradministrasjon og roller
+- varslingsmottakere og testvarsler
+- faner, historikk og duplikatbeskyttelse
 
 ## Opplasting
 
 1. Slett alt innhold i GitHub-repositoryet.
 2. Pakk ut ZIP-filen.
-3. Last opp hele innholdet til roten av repositoryet.
+3. Last opp hele innholdet til roten.
 4. Commit.
 5. Vent på automatisk Vercel-deploy.
 
-Behold Vercel-prosjekt, Environment Variables, Blob Store, Firebase og Resend.
+Behold Vercel-prosjekt, miljøvariabler, Blob Store, Firebase og Resend.

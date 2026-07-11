@@ -165,6 +165,7 @@ export async function POST(request: NextRequest) {
       orderNumber,
       customerName,
       phone: parsed?.phone ?? null,
+      deliveryAddress: parsed?.deliveryAddress ?? null,
       orderDate: parsed?.orderDate ?? null,
       deliveryDate,
       seller: parsed?.seller ?? null,
