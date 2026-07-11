@@ -1,37 +1,45 @@
-# Hjemleveringordre V1.2.1
+# Hjemleveringordre V1.3
 
-Denne versjonen retter varelinjetolkingen.
+Komplett prosjektpakke med:
 
-## Hva var galt?
+- moderne Obs BYGG-inspirert design
+- korrekt `OBS BYGG`-ordmerke i toppfeltet
+- produktbilder foran varelinjene
+- oppdatert produktnavn fra Obsbygg.no
+- produktlenke til Obsbygg.no
+- PDF-ordretekst beholdes som kontrolltekst
+- EAN og bestillingsnummer vises som etiketter
+- produktoppslag skjer kun:
+  - når ordren opprettes
+  - når «Tolk og oppdater produktinfo» trykkes
+- ingen nettskraping når en bruker bare åpner ordren
+- produktbildet kopieres til privat Vercel Blob
+- ordreimporten fortsetter selv om ett produktoppslag feiler
 
-PDF-en var lesbar, men tabellcellene ble ikke nødvendigvis returnert som én ferdig tekstlinje.
-Den gamle parseren krevde at hele raden allerede lå i én bestemt tekststreng.
+## Opplasting til GitHub
 
-## Ny metode
-
-Parseren leser nå tekstfragmentenes koordinater fra MuPDF og bygger hver visuelle
-tabellrad fra venstre mot høyre. Deretter identifiseres:
-
-- EAN/PLU
-- varetekst
-- bestillingsnummer
-- bestilt antall
-- enhet
-- levert antall
-- pris
-- linjesum
-
-Det finnes også en ekstra fallback som deler tabellen på EAN-numrene hvis PDF-en
-likevel leverer teksten i feil rekkefølge.
-
-## Opplasting
-
-Dette er en komplett prosjektpakke.
+Dette er en komplett pakke.
 
 1. Slett alt innhold i GitHub-repositoryet.
 2. Pakk ut ZIP-filen.
-3. Last opp hele innholdet til roten av repositoryet.
+3. Last opp alt innholdet til roten av repositoryet.
 4. Commit.
-5. Vent på Vercel-deploy.
+5. Vent på automatisk Vercel-deploy.
 
-Behold eksisterende Environment Variables og Vercel Blob Store.
+Behold eksisterende:
+
+- Vercel-prosjekt
+- Environment Variables
+- Vercel Blob Store
+- Firebase/Firestore
+- Resend-webhook
+
+## Test
+
+For eksisterende ordre:
+
+1. Åpne ordren som Admin.
+2. Trykk «Tolk og oppdater produktinfo».
+3. Appen leser PDF-en på nytt og henter navn/bilde fra Obsbygg.no.
+
+For nye ordre skjer begge deler automatisk ved opprettelse.

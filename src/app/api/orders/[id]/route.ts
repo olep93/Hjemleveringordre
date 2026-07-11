@@ -4,6 +4,7 @@ import { adminDb } from "@/lib/firebase/admin";
 import { requireRole, requireUser } from "@/lib/auth";
 import { sendOrderNotification } from "@/lib/notifications";
 import { parseOrderPdf } from "@/lib/orders/parse-order-pdf";
+import { enrichOrderItems } from "@/lib/orders/enrich-products";
 import {
   deletePrivateBlobs,
   privateFileRouteUrl,
@@ -66,6 +67,22 @@ export async function GET(
       })
     );
 
+    const items = (Array.isArray(data.items) ? data.items : []).map(
+      (
+        item: Record<string, unknown> & {
+          productImageBlob?: BlobReference | null;
+        }
+      ) => ({
+        ...item,
+        productImageUrl: item.productImageBlob?.pathname
+          ? privateFileRouteUrl(
+              item.productImageBlob.pathname,
+              item.productImageBlob.filename
+            )
+          : null
+      })
+    );
+
     return NextResponse.json({
       order: {
         id,
@@ -74,6 +91,7 @@ export async function GET(
         createdAt: data.createdAt?.toDate?.()?.toISOString?.() ?? null,
         updatedAt: data.updatedAt?.toDate?.()?.toISOString?.() ?? null,
         originalDocumentUrl: fileUrl(data.originalDocumentBlob),
+        items,
         hasLegacyFirebaseDocument: Boolean(
           data.originalDocumentPath && !data.originalDocumentBlob
         ),
@@ -286,6 +304,12 @@ export async function POST(
 
     const orderNumber = parsed.orderNumber ?? data.orderNumber ?? null;
     const customerName = parsed.customerName ?? data.customerName ?? null;
+    const existingItems = Array.isArray(data.items) ? data.items : [];
+    const enrichedItems = await enrichOrderItems(
+      parsed.items,
+      id,
+      existingItems
+    );
 
     await ref.update({
       orderNumber,
@@ -293,13 +317,13 @@ export async function POST(
       phone: parsed.phone ?? data.phone ?? null,
       orderDate: parsed.orderDate ?? data.orderDate ?? null,
       seller: parsed.seller ?? data.seller ?? null,
-      items: parsed.items.length > 0 ? parsed.items : data.items ?? [],
+      items: enrichedItems.length > 0 ? enrichedItems : data.items ?? [],
       rawExtractedText: parsed.rawText,
       parserVersion: parsed.parserVersion,
       parsingSummary: {
         foundOrderNumber: Boolean(parsed.orderNumber),
         foundCustomerName: Boolean(parsed.customerName),
-        itemCount: parsed.items.length
+        itemCount: enrichedItems.length
       },
       title: buildTitle(orderNumber, customerName),
       status:
@@ -322,7 +346,7 @@ export async function POST(
       ok: true,
       orderNumber,
       customerName,
-      itemCount: parsed.items.length
+      itemCount: enrichedItems.length
     });
   } catch (error) {
     const message =
@@ -356,6 +380,7 @@ export async function DELETE(
     const data = snapshot.data()!;
     const original = data.originalDocumentBlob as BlobReference | undefined;
     const photos = Array.isArray(data.photos) ? data.photos : [];
+    const items = Array.isArray(data.items) ? data.items : [];
 
     try {
       await deletePrivateBlobs([
@@ -364,7 +389,13 @@ export async function DELETE(
         ...photos.flatMap((photo: BlobReference) => [
           photo.url,
           photo.pathname
-        ])
+        ]),
+        ...items.flatMap(
+          (item: { productImageBlob?: BlobReference | null }) => [
+            item.productImageBlob?.url,
+            item.productImageBlob?.pathname
+          ]
+        )
       ]);
     } catch (blobError) {
       console.warn(

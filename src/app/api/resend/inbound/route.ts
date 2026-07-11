@@ -7,6 +7,7 @@ import { getSuggestedDeliveryDate } from "@/lib/orders/delivery-date";
 import { sendOrderNotification } from "@/lib/notifications";
 import { ensureBootstrapData } from "@/lib/auth";
 import { uploadPrivateBlob } from "@/lib/blob-storage";
+import { enrichOrderItems } from "@/lib/orders/enrich-products";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -137,6 +138,9 @@ export async function POST(request: NextRequest) {
           : "Ny ordre – må kontrolleres";
 
     const status = pdfAttachment ? "TO_PICK" : "DEVIATION";
+    const enrichedItems = parsed
+      ? await enrichOrderItems(parsed.items, documentId)
+      : [];
 
     await orderRef.set({
       internalId: `HL-${receivedAt.getFullYear()}-${emailId
@@ -176,7 +180,7 @@ export async function POST(request: NextRequest) {
           }
         : null,
       importError,
-      items: parsed?.items ?? [],
+      items: enrichedItems,
       placement: null,
       pickedBy: null,
       photos: [],
@@ -208,7 +212,7 @@ export async function POST(request: NextRequest) {
       emailId,
       orderNumber,
       customerName,
-      itemCount: parsed?.items.length ?? 0,
+      itemCount: enrichedItems.length,
       deliveryDate,
       status,
       importError

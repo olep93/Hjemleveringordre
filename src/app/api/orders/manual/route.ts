@@ -5,6 +5,8 @@ import { adminDb } from "@/lib/firebase/admin";
 import { parseOrderPdf } from "@/lib/orders/parse-order-pdf";
 import { getSuggestedDeliveryDate } from "@/lib/orders/delivery-date";
 import { uploadPrivateBlob } from "@/lib/blob-storage";
+import { enrichOrderItems } from "@/lib/orders/enrich-products";
+import type { ParsedOrderItem } from "@/lib/orders/parse-order-pdf";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,7 +29,7 @@ export async function POST(request: NextRequest) {
     let orderDate: string | null = null;
     let seller: string | null = null;
     let rawExtractedText: string | null = null;
-    let items: unknown[] = [];
+    let items: ParsedOrderItem[] = [];
 
     const orderRef = adminDb.collection("orders").doc();
     let originalDocumentBlob: {
@@ -72,6 +74,9 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    const enrichedItems =
+      items.length > 0 ? await enrichOrderItems(items, orderRef.id) : [];
+
     const title = orderNumber
       ? `Kundeordre ${orderNumber}${customerName ? ` – ${customerName}` : ""}`
       : customerName
@@ -95,7 +100,7 @@ export async function POST(request: NextRequest) {
       originalDocumentBlob,
       rawExtractedText,
       importError: null,
-      items,
+      items: enrichedItems,
       placement: null,
       pickedBy: null,
       photos: [],

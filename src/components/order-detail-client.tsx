@@ -2,26 +2,46 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import { AppHeader } from "@/components/app-header";
 import {
   ArrowLeft,
+  Box,
+  CalendarDays,
   Camera,
+  Check,
   CheckCircle2,
+  ExternalLink,
   FileSearch,
   FileText,
+  Info,
   MapPin,
   PackageCheck,
+  Pencil,
+  Play,
   Trash2,
-  Truck
+  Truck,
+  UserRound
 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+
+type BlobReference = {
+  pathname?: string;
+  filename?: string;
+};
 
 type Item = {
   id: string;
   articleNumber?: string | null;
   bestNumber?: string | null;
   description: string;
+  productName?: string | null;
+  productUrl?: string | null;
+  productImageBlob?: BlobReference | null;
+  productImageUrl?: string | null;
+  productLookupStatus?: string | null;
   quantity: number;
   unit?: string | null;
+  price?: number | null;
   checked: boolean;
   checkedBy?: string | null;
   isFreight?: boolean;
@@ -34,17 +54,14 @@ type Order = {
   customerName?: string | null;
   phone?: string | null;
   deliveryDate?: string | null;
+  createdAt?: string | null;
   status: string;
   placement?: string | null;
   pickedBy?: string | null;
   comment?: string | null;
   originalDocumentUrl?: string | null;
   originalDocumentPath?: string | null;
-  originalDocumentBlob?: {
-    pathname?: string;
-    filename?: string;
-  } | null;
-  hasLegacyFirebaseDocument?: boolean;
+  originalDocumentBlob?: BlobReference | null;
   items?: Item[];
   photos?: Array<{
     filename?: string;
@@ -60,12 +77,50 @@ type Order = {
   }>;
 };
 
-export default function OrderPage() {
+function formatDate(value?: string | null): string {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("nb-NO", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric"
+  }).format(date);
+}
+
+function formatDateTime(value?: string | null): string {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("nb-NO", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(date);
+}
+
+function formatPrice(value?: number | null): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return "";
+  return new Intl.NumberFormat("nb-NO", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  }).format(value);
+}
+
+export default function OrderPage({
+  initialUser
+}: {
+  initialUser: { displayName: string; role: string };
+}) {
   const params = useParams<{ id: string }>();
   const id = params.id;
 
   const [order, setOrder] = useState<Order | null>(null);
-  const [actorName, setActorName] = useState("");
+  const [actorName, setActorName] = useState(
+    initialUser.role === "GUEST" ? "" : initialUser.displayName
+  );
   const [orderNumber, setOrderNumber] = useState("");
   const [customerName, setCustomerName] = useState("");
   const [phone, setPhone] = useState("");
@@ -75,14 +130,10 @@ export default function OrderPage() {
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [currentUser, setCurrentUser] = useState<{
-    displayName: string;
-    role: string;
-  } | null>(null);
 
-  const canEdit = currentUser && currentUser.role !== "GUEST";
+  const canEdit = initialUser.role !== "GUEST";
   const canDelete =
-    currentUser?.role === "ADMIN" || currentUser?.role === "MANAGER";
+    initialUser.role === "ADMIN" || initialUser.role === "MANAGER";
 
   const load = useCallback(async () => {
     const response = await fetch(`/api/orders/${id}`, { cache: "no-store" });
@@ -102,37 +153,24 @@ export default function OrderPage() {
   }, [id]);
 
   useEffect(() => {
-    void load().catch((e) => setError(e.message));
-
-    void fetch("/api/auth/me")
-      .then((response) => response.json())
-      .then((result) => {
-        if (result.user) {
-          setCurrentUser(result.user);
-          if (result.user.role !== "GUEST") {
-            setActorName(result.user.displayName);
-          }
-        }
-      });
+    void load().catch((loadError) =>
+      setError(
+        loadError instanceof Error ? loadError.message : "Kunne ikke hente ordre."
+      )
+    );
   }, [load]);
 
   const progress = useMemo(() => {
-    const items = order?.items ?? [];
-    const pluckable = items.filter((item) => !item.isFreight);
-    const checked = pluckable.filter((item) => item.checked).length;
-    return { checked, total: pluckable.length };
+    const pluckable = (order?.items ?? []).filter((item) => !item.isFreight);
+    return {
+      checked: pluckable.filter((item) => item.checked).length,
+      total: pluckable.length
+    };
   }, [order]);
 
   async function update(status?: string) {
-    if (!canEdit) {
-      setError("Gjestetilgang er skrivebeskyttet.");
-      return;
-    }
-
-    if (!actorName.trim()) {
-      setError("Skriv inn navnet ditt først.");
-      return;
-    }
+    if (!canEdit) return setError("Gjestetilgang er skrivebeskyttet.");
+    if (!actorName.trim()) return setError("Skriv inn navnet ditt først.");
 
     setSaving(true);
     setError(null);
@@ -155,28 +193,27 @@ export default function OrderPage() {
       });
 
       const result = await response.json();
-      if (!response.ok) {
-        throw new Error(result.error ?? "Kunne ikke oppdatere.");
-      }
+      if (!response.ok) throw new Error(result.error ?? "Kunne ikke oppdatere.");
 
       setInfo(status ? "Statusen er oppdatert." : "Endringene er lagret.");
       await load();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Kunne ikke oppdatere.");
+    } catch (updateError) {
+      setError(
+        updateError instanceof Error
+          ? updateError.message
+          : "Kunne ikke oppdatere."
+      );
     } finally {
       setSaving(false);
     }
   }
 
   async function reparse() {
-    if (!canEdit) {
-      setError("Gjestetilgang er skrivebeskyttet.");
-      return;
-    }
+    if (!canEdit) return setError("Gjestetilgang er skrivebeskyttet.");
 
     setSaving(true);
     setError(null);
-    setInfo(null);
+    setInfo("Tolker PDF og henter oppdatert produktinformasjon fra Obsbygg.no …");
 
     try {
       const response = await fetch(`/api/orders/${id}`, {
@@ -191,25 +228,25 @@ export default function OrderPage() {
       }
 
       setInfo(
-        `Dokumentet ble tolket på nytt. Fant ${result.itemCount ?? 0} varelinjer.`
+        `Ferdig. Fant ${result.itemCount ?? 0} varelinjer og oppdaterte produktinformasjonen.`
       );
       await load();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Kunne ikke tolke dokumentet.");
+    } catch (parseError) {
+      setInfo(null);
+      setError(
+        parseError instanceof Error
+          ? parseError.message
+          : "Kunne ikke tolke dokumentet."
+      );
     } finally {
       setSaving(false);
     }
   }
 
   async function toggleItem(item: Item) {
-    if (!canEdit) {
-      setError("Gjestetilgang er skrivebeskyttet.");
-      return;
-    }
-
+    if (!canEdit) return setError("Gjestetilgang er skrivebeskyttet.");
     if (!actorName.trim()) {
-      setError("Skriv inn navnet ditt før du krysser av varer.");
-      return;
+      return setError("Skriv inn navnet ditt før du krysser av varer.");
     }
 
     const response = await fetch(
@@ -223,8 +260,7 @@ export default function OrderPage() {
 
     const result = await response.json();
     if (!response.ok) {
-      setError(result.error ?? "Kunne ikke oppdatere varelinjen.");
-      return;
+      return setError(result.error ?? "Kunne ikke oppdatere varelinjen.");
     }
 
     await load();
@@ -232,19 +268,9 @@ export default function OrderPage() {
 
   async function uploadPhoto(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-
-    if (!canEdit) {
-      setError("Gjestetilgang er skrivebeskyttet.");
-      return;
-    }
+    if (!canEdit) return setError("Gjestetilgang er skrivebeskyttet.");
 
     const formElement = event.currentTarget;
-
-    if (!actorName.trim()) {
-      setError("Skriv inn navnet ditt før du laster opp bilde.");
-      return;
-    }
-
     const form = new FormData(formElement);
     form.set("uploadedBy", actorName);
     setSaving(true);
@@ -254,16 +280,18 @@ export default function OrderPage() {
         method: "POST",
         body: form
       });
-
       const result = await response.json();
       if (!response.ok) {
         throw new Error(result.error ?? "Kunne ikke laste opp bilde.");
       }
-
       formElement.reset();
       await load();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Kunne ikke laste opp bilde.");
+    } catch (uploadError) {
+      setError(
+        uploadError instanceof Error
+          ? uploadError.message
+          : "Kunne ikke laste opp bilde."
+      );
     } finally {
       setSaving(false);
     }
@@ -271,10 +299,8 @@ export default function OrderPage() {
 
   async function deleteOrder() {
     if (!canDelete) {
-      setError("Bare leder eller administrator kan slette ordre.");
-      return;
+      return setError("Bare leder eller administrator kan slette ordre.");
     }
-
     if (!window.confirm("Vil du slette denne ordren permanent?")) return;
 
     setSaving(true);
@@ -283,309 +309,391 @@ export default function OrderPage() {
     try {
       const response = await fetch(`/api/orders/${id}`, { method: "DELETE" });
       const result = await response.json();
-
       if (!response.ok) {
-        throw new Error(
-          `${result.error ?? "Kunne ikke slette ordren."} (HTTP ${response.status})`
-        );
+        throw new Error(result.error ?? "Kunne ikke slette ordren.");
       }
-
-      window.location.assign("/");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Kunne ikke slette ordren.");
+      window.location.assign("/?deleted=1");
+    } catch (deleteError) {
+      setError(
+        deleteError instanceof Error
+          ? deleteError.message
+          : "Kunne ikke slette ordren."
+      );
       setSaving(false);
     }
   }
 
-  if (!order) {
-    return (
-      <main className="page-shell">
-        {error ? <div className="error-box">{error}</div> : "Henter ordre …"}
-      </main>
-    );
-  }
-
   return (
-    <main className="page-shell">
-      <div className="page-header">
-        <Link className="back-link" href="/">
-          <ArrowLeft size={19} /> Dashboard
-        </Link>
-        <div>
-          <p className="eyebrow">{order.status}</p>
-          <h1>
-            {orderNumber
-              ? `Kundeordre ${orderNumber}${customerName ? ` – ${customerName}` : ""}`
-              : customerName
-                ? `Hjemlevering – ${customerName}`
-                : "Ny ordre – må kontrolleres"}
-          </h1>
-        </div>
-      </div>
+    <main>
+      <AppHeader user={initialUser} />
 
-      {currentUser?.role === "GUEST" && (
-        <div className="guest-notice">
-          Du ser ordren som gjest. Logg inn for å plukke, redigere eller slette.
-        </div>
-      )}
-
-      <div className="detail-grid">
-        <section className="form-card">
-          <h2>Ordreinformasjon</h2>
-
-          <div className="form-grid order-header-fields">
-            <label>
-              Kundeordrenummer
-              <input
-                value={orderNumber}
-                onChange={(e) => setOrderNumber(e.target.value)}
-                disabled={!canEdit}
-                placeholder="F.eks. 539"
-              />
-            </label>
-
-            <label>
-              Kundenavn
-              <input
-                value={customerName}
-                onChange={(e) => setCustomerName(e.target.value)}
-                disabled={!canEdit}
-                placeholder="Navn på kunde"
-              />
-            </label>
-
-            <label>
-              Telefon
-              <input
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                disabled={!canEdit}
-                placeholder="Mobilnummer"
-              />
-            </label>
-
-            <label>
-              Navnet ditt
-              <input
-                value={actorName}
-                onChange={(e) => setActorName(e.target.value)}
-                disabled={!canEdit}
-                placeholder="Hvem utfører handlingen?"
-              />
-            </label>
-
-            <label>
-              Leveringsdato
-              <input
-                type="date"
-                value={deliveryDate}
-                onChange={(e) => setDeliveryDate(e.target.value)}
-                disabled={!canEdit}
-              />
-            </label>
-
-            <label>
-              Plassering
-              <select
-                value={placement}
-                onChange={(e) => setPlacement(e.target.value)}
-                disabled={!canEdit}
-              >
-                <option value="">Velg plassering</option>
-                <option>Utvendig betong</option>
-                <option>Varemottak Drive-In</option>
-                <option>Kasse Drive-In</option>
-              </select>
-            </label>
-
-            <label className="full">
-              Kommentar
-              <textarea
-                rows={3}
-                value={comment}
-                onChange={(e) => setComment(e.target.value)}
-                disabled={!canEdit}
-              />
-            </label>
+      {!order ? (
+        <section className="modern-order-page">
+          <div className="modern-card">
+            {error ? <div className="error-box">{error}</div> : "Henter ordre …"}
           </div>
-
-          {error && <div className="error-box">{error}</div>}
-          {info && <div className="info-message">{info}</div>}
-
-          {canEdit && (
-            <>
-              <div className="action-grid">
-                <button
-                  className="secondary-button"
-                  disabled={saving}
-                  onClick={() => void update("PICKING")}
-                >
-                  Start plukking
-                </button>
-
-                <button
-                  className="success-button"
-                  disabled={saving}
-                  onClick={() => void update("READY_FOR_LOADING")}
-                >
-                  <PackageCheck size={18} /> Klar for lasting
-                </button>
-
-                <button
-                  className="secondary-button"
-                  disabled={saving}
-                  onClick={() => void update("LOADED")}
-                >
-                  <Truck size={18} /> Lastet på bil
-                </button>
-
-                <button
-                  className="secondary-button"
-                  disabled={saving}
-                  onClick={() => void update()}
-                >
-                  Lagre endringer
-                </button>
+        </section>
+      ) : (
+        <section className="modern-order-page">
+          <div className="order-titlebar">
+            <div>
+              <Link className="modern-back-link" href="/">
+                <ArrowLeft size={18} /> Tilbake til oversikt
+              </Link>
+              <div className="title-line">
+                <h1>
+                  {orderNumber
+                    ? `Kundeordre ${orderNumber}${
+                        customerName ? ` – ${customerName}` : ""
+                      }`
+                    : "Ny ordre – må kontrolleres"}
+                </h1>
+                <span className="status-chip">{order.status}</span>
               </div>
-
-              {(order.originalDocumentBlob?.pathname || order.originalDocumentPath) && (
-                <button
-                  className="secondary-button reparse-button"
-                  disabled={saving}
-                  onClick={() => void reparse()}
-                >
-                  <FileSearch size={18} /> Tolk originaldokument på nytt
-                </button>
+              {order.createdAt && (
+                <p className="created-line">
+                  <CalendarDays size={16} />
+                  Opprettet {formatDateTime(order.createdAt)}
+                </p>
               )}
-            </>
-          )}
+            </div>
 
-          {canDelete && (
-            <button
-              className="danger-button delete-order-button"
-              disabled={saving}
-              onClick={() => void deleteOrder()}
-            >
-              <Trash2 size={18} /> Slett ordre permanent
-            </button>
-          )}
-
-          {order.originalDocumentUrl && (
-            <a
-              className="document-link"
-              href={order.originalDocumentUrl}
-              target="_blank"
-              rel="noreferrer"
-            >
-              <FileText size={18} /> Åpne original ordre
-            </a>
-          )}
-        </section>
-
-        <section className="form-card">
-          <div className="section-title-row">
-            <h2>Plukkeliste</h2>
-            <span className="progress-pill">
-              {progress.checked}/{progress.total}
-            </span>
-          </div>
-
-          <div className="item-list">
-            {(order.items ?? []).length === 0 ? (
-              <div className="empty-state compact">
-                Ingen varelinjer ble tolket. Bruk «Tolk originaldokument på nytt»,
-                eller åpne originalordren for manuell kontroll.
-              </div>
-            ) : (
-              (order.items ?? []).map((item) => (
-                <button
-                  type="button"
-                  className={`item-row ${item.checked ? "checked" : ""} ${
-                    item.isFreight ? "freight" : ""
-                  }`}
-                  key={item.id}
-                  onClick={() =>
-                    canEdit && !item.isFreight && void toggleItem(item)
-                  }
-                  disabled={!canEdit || item.isFreight}
+            <div className="title-actions">
+              {order.originalDocumentUrl && (
+                <a
+                  className="outline-action"
+                  href={order.originalDocumentUrl}
+                  target="_blank"
+                  rel="noreferrer"
                 >
-                  <span className="check-box">
-                    {item.checked ? <CheckCircle2 size={20} /> : null}
-                  </span>
-                  <span className="item-copy">
-                    <strong>
-                      {item.quantity} {item.unit ?? "stk"} – {item.description}
-                    </strong>
-                    <small>
-                      {item.articleNumber
-                        ? `EAN ${item.articleNumber}`
-                        : ""}
-                      {item.bestNumber
-                        ? ` · Best.nr. ${item.bestNumber}`
-                        : ""}
-                      {item.checkedBy && item.checkedBy !== "SYSTEM"
-                        ? ` · ${item.checkedBy}`
-                        : ""}
-                    </small>
-                  </span>
-                </button>
-              ))
-            )}
+                  <FileText size={18} /> Åpne original ordre
+                  <ExternalLink size={15} />
+                </a>
+              )}
+
+              {canEdit &&
+                (order.originalDocumentBlob?.pathname ||
+                  order.originalDocumentPath) && (
+                  <button
+                    className="blue-action"
+                    disabled={saving}
+                    onClick={() => void reparse()}
+                  >
+                    <FileSearch size={18} />
+                    {saving ? "Arbeider …" : "Tolk og oppdater produktinfo"}
+                  </button>
+                )}
+            </div>
           </div>
-        </section>
 
-        <section className="form-card">
-          <h2>Bilder av ferdig ordre</h2>
-
-          {canEdit && (
-            <form className="photo-form" onSubmit={uploadPhoto}>
-              <input
-                name="file"
-                type="file"
-                accept="image/*"
-                capture="environment"
-                required
-              />
-              <button className="primary-button" disabled={saving}>
-                <Camera size={18} /> Last opp bilde
-              </button>
-            </form>
+          {initialUser.role === "GUEST" && (
+            <div className="guest-notice">
+              Du ser ordren som gjest. Logg inn for å plukke eller redigere.
+            </div>
           )}
 
-          <div className="photo-grid">
-            {(order.photos ?? []).map((photo, index) =>
-              photo.url ? (
-                <figure key={index}>
-                  <img
-                    src={photo.url}
-                    alt={photo.filename ?? "Ordrebilde"}
-                  />
-                  <figcaption>{photo.uploadedBy ?? "Ukjent"}</figcaption>
-                </figure>
-              ) : null
-            )}
-          </div>
-        </section>
-
-        <section className="form-card full-width">
-          <h2>Historikk</h2>
-          <div className="timeline">
-            {(order.events ?? []).map((event) => (
-              <div className="timeline-item" key={event.id}>
-                <MapPin size={16} />
-                <div>
-                  <strong>{event.description ?? "Hendelse"}</strong>
-                  <p>
-                    {event.createdAt
-                      ? new Date(event.createdAt).toLocaleString("nb-NO")
-                      : ""}
-                  </p>
-                </div>
+          <div className="modern-detail-grid">
+            <section className="modern-card order-information-card">
+              <div className="modern-card-title">
+                <span className="title-icon"><ClipboardIcon /></span>
+                <h2>Ordreinformasjon</h2>
               </div>
-            ))}
+
+              <div className="modern-form-grid">
+                <label>
+                  Kundeordrenummer
+                  <input
+                    value={orderNumber}
+                    onChange={(event) => setOrderNumber(event.target.value)}
+                    disabled={!canEdit}
+                  />
+                </label>
+                <label>
+                  Kundenavn
+                  <input
+                    value={customerName}
+                    onChange={(event) => setCustomerName(event.target.value)}
+                    disabled={!canEdit}
+                  />
+                </label>
+                <label>
+                  Telefon
+                  <div className="input-with-icon">
+                    <UserRound size={17} />
+                    <input
+                      value={phone}
+                      onChange={(event) => setPhone(event.target.value)}
+                      disabled={!canEdit}
+                      placeholder="Telefonnummer"
+                    />
+                  </div>
+                </label>
+                <label>
+                  Navnet ditt
+                  <div className="input-with-icon">
+                    <UserRound size={17} />
+                    <input
+                      value={actorName}
+                      onChange={(event) => setActorName(event.target.value)}
+                      disabled={!canEdit}
+                    />
+                  </div>
+                </label>
+                <label>
+                  Leveringsdato
+                  <input
+                    type="date"
+                    value={deliveryDate}
+                    onChange={(event) => setDeliveryDate(event.target.value)}
+                    disabled={!canEdit}
+                  />
+                </label>
+                <label>
+                  Plassering
+                  <div className="input-with-icon">
+                    <MapPin size={17} />
+                    <select
+                      value={placement}
+                      onChange={(event) => setPlacement(event.target.value)}
+                      disabled={!canEdit}
+                    >
+                      <option value="">Velg plassering</option>
+                      <option>Utvendig betong</option>
+                      <option>Varemottak Drive-In</option>
+                      <option>Kasse Drive-In</option>
+                    </select>
+                  </div>
+                </label>
+                <label className="full">
+                  Kommentar
+                  <textarea
+                    rows={3}
+                    value={comment}
+                    onChange={(event) => setComment(event.target.value)}
+                    disabled={!canEdit}
+                    placeholder="Legg til kommentar …"
+                  />
+                </label>
+              </div>
+
+              {error && <div className="error-box">{error}</div>}
+              {info && <div className="info-message">{info}</div>}
+
+              {canEdit && (
+                <div className="modern-action-grid">
+                  <button
+                    className="blue-action"
+                    disabled={saving}
+                    onClick={() => void update("PICKING")}
+                  >
+                    <Play size={18} /> Start plukking
+                  </button>
+                  <button
+                    className="green-action"
+                    disabled={saving}
+                    onClick={() => void update("READY_FOR_LOADING")}
+                  >
+                    <CheckCircle2 size={18} /> Klar for lasting
+                  </button>
+                  <button
+                    className="outline-action"
+                    disabled={saving}
+                    onClick={() => void update("LOADED")}
+                  >
+                    <Truck size={18} /> Lastet på bil
+                  </button>
+                  <button
+                    className="outline-action"
+                    disabled={saving}
+                    onClick={() => void update()}
+                  >
+                    <Pencil size={18} /> Lagre endringer
+                  </button>
+                </div>
+              )}
+
+              <div className="danger-document-row">
+                {canDelete && (
+                  <button
+                    className="modern-danger-button"
+                    disabled={saving}
+                    onClick={() => void deleteOrder()}
+                  >
+                    <Trash2 size={18} /> Slett ordre permanent
+                  </button>
+                )}
+                {order.originalDocumentUrl && (
+                  <a
+                    className="outline-action"
+                    href={order.originalDocumentUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    <FileText size={18} /> Åpne original ordre
+                  </a>
+                )}
+              </div>
+            </section>
+
+            <section className="modern-card picking-card">
+              <div className="modern-card-title picking-title">
+                <span className="title-icon outline"><Box size={23} /></span>
+                <h2>Plukkeliste</h2>
+                <span className="modern-progress-pill">
+                  {progress.checked} / {progress.total} plukket
+                </span>
+              </div>
+
+              <div className="modern-item-list">
+                {(order.items ?? []).length === 0 ? (
+                  <div className="empty-state">
+                    Ingen varelinjer ble tolket. Bruk «Tolk og oppdater
+                    produktinfo».
+                  </div>
+                ) : (
+                  (order.items ?? []).map((item) => (
+                    <article
+                      className={`modern-product-row ${
+                        item.checked ? "checked" : ""
+                      }`}
+                      key={item.id}
+                    >
+                      <button
+                        className="product-checkbox"
+                        type="button"
+                        onClick={() =>
+                          canEdit && !item.isFreight && void toggleItem(item)
+                        }
+                        disabled={!canEdit || item.isFreight}
+                        aria-label={
+                          item.checked ? "Marker som ikke plukket" : "Marker som plukket"
+                        }
+                      >
+                        {item.checked && <Check size={18} />}
+                      </button>
+
+                      <div className="product-image-wrap">
+                        {item.productImageUrl ? (
+                          <img
+                            src={item.productImageUrl}
+                            alt={item.productName ?? item.description}
+                          />
+                        ) : (
+                          <Box size={32} />
+                        )}
+                      </div>
+
+                      <div className="product-description">
+                        <div className="product-name-line">
+                          {item.productUrl ? (
+                            <a
+                              href={item.productUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              {item.productName ?? item.description}
+                              <ExternalLink size={14} />
+                            </a>
+                          ) : (
+                            <strong>{item.productName ?? item.description}</strong>
+                          )}
+                        </div>
+                        {item.productName && (
+                          <p>Ordretekst: {item.description}</p>
+                        )}
+                        <div className="product-tags">
+                          {item.articleNumber && (
+                            <span>EAN {item.articleNumber}</span>
+                          )}
+                          {item.bestNumber && (
+                            <span>Best.nr {item.bestNumber}</span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="product-quantity">
+                        <strong>
+                          {item.quantity} {item.unit ?? "stk"}
+                        </strong>
+                        {item.price !== null && item.price !== undefined && (
+                          <span>à {formatPrice(item.price)}</span>
+                        )}
+                        <em>{item.checked ? "Plukket" : "Ikke plukket"}</em>
+                      </div>
+                    </article>
+                  ))
+                )}
+              </div>
+
+              <div className="picking-help">
+                <Info size={18} />
+                Huk av når varen er plukket. Fremdriften lagres automatisk.
+              </div>
+            </section>
+          </div>
+
+          <div className="lower-grid">
+            <section className="modern-card">
+              <div className="modern-card-title">
+                <span className="title-icon"><Camera size={21} /></span>
+                <h2>Bilder av ferdig ordre</h2>
+              </div>
+              {canEdit && (
+                <form className="modern-photo-form" onSubmit={uploadPhoto}>
+                  <input
+                    name="file"
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    required
+                  />
+                  <button className="blue-action" disabled={saving}>
+                    <Camera size={18} /> Last opp bilde
+                  </button>
+                </form>
+              )}
+              <div className="photo-grid">
+                {(order.photos ?? []).map((photo, index) =>
+                  photo.url ? (
+                    <figure key={index}>
+                      <img src={photo.url} alt={photo.filename ?? "Ordrebilde"} />
+                      <figcaption>{photo.uploadedBy ?? "Ukjent"}</figcaption>
+                    </figure>
+                  ) : null
+                )}
+              </div>
+            </section>
+
+            <section className="modern-card">
+              <div className="modern-card-title">
+                <span className="title-icon"><PackageCheck size={21} /></span>
+                <h2>Historikk</h2>
+              </div>
+              <div className="timeline">
+                {(order.events ?? []).map((event) => (
+                  <div className="timeline-item" key={event.id}>
+                    <MapPin size={16} />
+                    <div>
+                      <strong>{event.description ?? "Hendelse"}</strong>
+                      <p>{formatDateTime(event.createdAt)}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
           </div>
         </section>
-      </div>
+      )}
     </main>
+  );
+}
+
+function ClipboardIcon() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+      <path d="M8 5h8M9 3h6a1 1 0 0 1 1 1v2H8V4a1 1 0 0 1 1-1Z" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
+      <rect x="5" y="5" width="14" height="16" rx="2.5" stroke="currentColor" strokeWidth="1.8"/>
+      <path d="M9 11h6M9 15h6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
+    </svg>
   );
 }

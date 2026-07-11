@@ -1,8 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { LogIn, LogOut, Settings } from "lucide-react";
-import { useRouter } from "next/navigation";
+import {
+  ClipboardList,
+  LayoutDashboard,
+  LogIn,
+  LogOut,
+  Settings,
+  UserCircle2
+} from "lucide-react";
+import { usePathname, useRouter } from "next/navigation";
 
 export function AppHeader({
   user,
@@ -12,6 +19,7 @@ export function AppHeader({
   children?: React.ReactNode;
 }) {
   const router = useRouter();
+  const pathname = usePathname();
   const isGuest = user.role === "GUEST";
 
   async function logout() {
@@ -21,48 +29,73 @@ export function AppHeader({
   }
 
   return (
-    <header className="topbar">
-      <div className="brand">
-        <div className="brand-mark">OBS</div>
-        <div>
-          <p className="eyebrow">BYGG TØNSBERG</p>
-          <h1>Hjemleveringordre</h1>
-        </div>
-      </div>
+    <header className="modern-topbar">
+      <div className="topbar-inner">
+        <Link className="obs-bygg-wordmark" href="/" aria-label="Obs BYGG">
+          <span>OBS</span>
+          <span>BYGG</span>
+        </Link>
 
-      <div className="header-actions">
-        {children}
-
-        {isGuest ? (
-          <Link className="login-link-button" href="/login">
-            <LogIn size={18} />
-            <span>Logg inn</span>
+        <nav className="main-nav" aria-label="Hovedmeny">
+          <Link
+            className={pathname === "/" ? "nav-link active" : "nav-link"}
+            href="/"
+          >
+            <LayoutDashboard size={19} />
+            <span>Dashboard</span>
           </Link>
-        ) : (
-          <>
-            {user.role === "ADMIN" && (
-              <Link
-                className="icon-button"
-                href="/admin"
-                aria-label="Administrasjon"
-                title="Administrasjon"
+
+          <Link
+            className={
+              pathname.startsWith("/orders") ? "nav-link active" : "nav-link"
+            }
+            href="/"
+          >
+            <ClipboardList size={19} />
+            <span>Ordre</span>
+          </Link>
+        </nav>
+
+        <div className="modern-header-actions">
+          {children}
+
+          {isGuest ? (
+            <Link className="header-login-button" href="/login">
+              <LogIn size={18} />
+              <span>Logg inn</span>
+            </Link>
+          ) : (
+            <>
+              {user.role === "ADMIN" && (
+                <Link
+                  className="header-icon-button"
+                  href="/admin"
+                  aria-label="Administrasjon"
+                  title="Administrasjon"
+                >
+                  <Settings size={19} />
+                </Link>
+              )}
+
+              <div className="header-user">
+                <UserCircle2 size={36} />
+                <div>
+                  <strong>{user.displayName}</strong>
+                  <span>{user.role === "ADMIN" ? "Administrator" : user.role}</span>
+                </div>
+              </div>
+
+              <button
+                className="header-icon-button"
+                onClick={logout}
+                aria-label="Logg ut"
+                title="Logg ut"
               >
-                <Settings size={19} />
-              </Link>
-            )}
-
-            <span className="user-badge">{user.displayName}</span>
-
-            <button
-              className="icon-button"
-              onClick={logout}
-              aria-label="Logg ut"
-              title="Logg ut"
-            >
-              <LogOut size={19} />
-            </button>
-          </>
-        )}
+                <LogOut size={19} />
+              </button>
+            </>
+          )}
+        </div>
       </div>
     </header>
   );
