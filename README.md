@@ -1,80 +1,14 @@
-# Hjemleveringordre V1.9.2 – forbedret Klikk & Hent-skanner og generiske PLU
+# Hjemleveringordre V2.0 – full administratorredigering
 
-Komplett versjon med alt fra V1.8.
+Komplett pakke med alt fra V1.9.2.
 
-## Klikk & Hent-skanner
+Administrator kan nå tilbakestille en ordre til «Må plukkes», endre all
+ordreinformasjon, endre Waypoint-mottaker, legge til/redigere/slette varelinjer,
+endre EAN/PLU, antall, enhet, radtekst og linjekommentar, samt endre avhuking.
 
-Når et bilde velges, limes inn eller tas med kamera, kjøres OCR automatisk.
+Standard Waypoint-adresse er `marcus@waypointlarvik.no`.
 
-Skanneren forsøker å hente:
+Alle administratorendringer registreres i historikken.
 
-- ordrenummer
-- kundenavn
-- adresse og poststed
-- telefon
-- GTIN/EAN
-- varenavn fra produktoverskriften
-- modell som alternativ hjelpetekst
-- enhet og antall
-
-Kategorier som `Konstruksjonsvirke` og `Terrasse` ignoreres.
-
-Eksempel:
-
-- overskrift: `48x98 K-Virke Imp C24`
-- GTIN: `7040431878659`
-- modell: `MOELVEN KVIRKE 48X98 FURU C24 IMP L`
-- antall: `130 Meter`
-
-Skanneren fyller inn redigerbare felt. Brukeren skal kontrollere resultatet før
-ordren opprettes.
-
-## Generiske PLU-linjer
-
-Korte PLU-er som:
-
-- `20032 BYGGEVARER`
-- `90646 VINDUER`
-
-blir ikke søkt opp på Obsbygg.no.
-
-Appen beholder:
-
-- PLU-nummer
-- varetekst
-- kommentaren i de etterfølgende radene
-
-Eksempel:
-
-`90646 VINDUER`
-
-Kommentar:
-
-`Tilbud #11465313`
-
-Kommentaren vises i plukklisten og følger med i e-postvarsler.
-
-## Opplasting
-
-Slett innholdet i GitHub-repositoryet og last opp hele den utpakkede pakken til
-roten. Behold Vercel-prosjekt, miljøvariabler, Blob Store, Firebase og Resend.
-
-Første Vercel-bygg installerer den nye avhengigheten `tesseract.js`.
-
-
-## Buildfix 1.9.1
-
-OCR-ruten sender nå en Node.js `Buffer` til Tesseract i stedet for
-`Uint8Array`. Dette retter TypeScript-feilen i Vercel-builden:
-
-`Uint8Array<ArrayBuffer> is not assignable to ImageLike`
-
-
-## TypeScript-buildfix 1.9.2
-
-Manuelt opprettede varelinjer inkluderer nå de obligatoriske feltene:
-
-- `lineComment`
-- `identifierType`
-
-Dette retter Vercel-feilen der objektet ikke kunne tilordnes `ParsedOrderItem[]`.
+Last opp hele pakken til roten av GitHub-repositoryet. Behold Vercel-prosjekt,
+miljøvariabler, Blob Store, Firebase og Resend.

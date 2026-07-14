@@ -1,20 +1,12 @@
 {
   "project": "Hjemleveringordre",
-  "version": "1.9.2",
+  "version": "2.0.0",
   "completeSrcFolder": true,
-  "includesAllFrom": "1.8.0",
+  "includesAllFrom": "1.9.2",
   "features": [
-    "automatic OCR for Click & Collect images",
-    "header-based Click & Collect product names",
-    "GTIN and quantity extraction",
-    "category row exclusion",
-    "generic short PLU support",
-    "PLU line comments preserved",
-    "no Obsbygg lookup for PLU"
-  ],
-  "buildFix": "Tesseract recognize now receives Buffer",
-  "buildFixes": [
-    "Tesseract recognize receives Node Buffer",
-    "Manual ParsedOrderItem includes lineComment and identifierType"
+    "full admin editing",
+    "reset to TO_PICK",
+    "add edit delete items",
+    "default Waypoint email"
   ]
 }

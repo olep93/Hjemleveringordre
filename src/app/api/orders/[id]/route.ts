@@ -190,6 +190,22 @@ export async function PATCH(
       pickupDate?: string | null;
       pickupRecipientEmail?: string | null;
       locationCode?: string | null;
+      adminAction?: "RESET_TO_PICK";
+      adminEdit?: {
+        title?: string | null;
+        orderNumber?: string | null;
+        customerName?: string | null;
+        phone?: string | null;
+        deliveryAddress?: string | null;
+        deliveryDate?: string | null;
+        placement?: string | null;
+        locationCode?: string | null;
+        comment?: string | null;
+        fulfillmentMethod?: "THIS_THURSDAY" | "NEXT_THURSDAY" | "OWN_VEHICLE" | null;
+        pickupDate?: string | null;
+        pickupRecipientEmail?: string | null;
+        items?: OrderItem[];
+      };
     };
 
     const actorName = body.actorName?.trim() || "Ukjent";
@@ -204,6 +220,106 @@ export async function PATCH(
     const currentItems: OrderItem[] = Array.isArray(current.items)
       ? current.items
       : [];
+
+    if (body.adminAction || body.adminEdit) {
+      const admin = await requireRole(["ADMIN"]);
+
+      if (body.adminAction === "RESET_TO_PICK") {
+        const resetItems = currentItems.map((item) => ({
+          ...item,
+          checked: item.isFreight ? true : false,
+          checkedBy: item.isFreight ? "SYSTEM" : null,
+          checkedAt: item.isFreight ? item.checkedAt ?? new Date().toISOString() : null
+        }));
+
+        await ref.update({
+          status: "TO_PICK",
+          items: resetItems,
+          pickedBy: null,
+          pickedAt: null,
+          pickingStartedAt: null,
+          pickingSessionOpen: false,
+          lastPickingSavedAt: null,
+          lastPickingSavedBy: null,
+          fulfillmentMethod: null,
+          pickupDate: null,
+          pickupShareToken: null,
+          updatedAt: FieldValue.serverTimestamp()
+        });
+
+        await ref.collection("events").add({
+          type: "ADMIN_RESET_TO_PICK",
+          description: `Ordren ble tilbakestilt til «Må plukkes» av ${admin.displayName}.`,
+          actorType: "USER",
+          actorName: admin.displayName,
+          createdAt: FieldValue.serverTimestamp()
+        });
+
+        return NextResponse.json({ ok: true });
+      }
+
+      const edit = body.adminEdit!;
+      const orderNumber = edit.orderNumber?.trim() || null;
+      const customerName = edit.customerName?.trim() || null;
+      const editedItems = Array.isArray(edit.items)
+        ? edit.items
+            .filter((item) => String(item.description ?? "").trim())
+            .map((item, index) => {
+              const articleNumber = String(item.articleNumber ?? "").trim() || null;
+              const identifierType =
+                item.identifierType === "PLU" ||
+                (articleNumber && !/^\d{12,14}$/.test(articleNumber))
+                  ? "PLU"
+                  : "EAN";
+
+              return {
+                ...item,
+                id: item.id || `admin-${Date.now()}-${index}`,
+                articleNumber,
+                identifierType,
+                description: String(item.description ?? "").trim(),
+                rawDescription: String(item.rawDescription ?? "").trim() || null,
+                lineComment: String(item.lineComment ?? "").trim() || null,
+                bestNumber: String(item.bestNumber ?? "").trim() || null,
+                quantity: Number(item.quantity) || 1,
+                unit: String(item.unit ?? "Stk").trim() || "Stk",
+                checked: Boolean(item.checked),
+                checkedBy: item.checked ? item.checkedBy ?? admin.displayName : null,
+                checkedAt: item.checked ? item.checkedAt ?? new Date().toISOString() : null,
+                isFreight: Boolean(item.isFreight)
+              };
+            })
+        : currentItems;
+
+      await ref.update({
+        title: edit.title?.trim() || buildTitle(orderNumber, customerName),
+        orderNumber,
+        customerName,
+        phone: edit.phone?.trim() || null,
+        deliveryAddress: edit.deliveryAddress?.trim() || null,
+        deliveryDate: edit.deliveryDate || null,
+        placement: edit.placement?.trim() || null,
+        locationCode: edit.locationCode?.trim() || null,
+        comment: edit.comment || null,
+        fulfillmentMethod: edit.fulfillmentMethod ?? null,
+        pickupDate: edit.pickupDate || null,
+        pickupRecipientEmail:
+          edit.pickupRecipientEmail?.trim().toLowerCase() ||
+          "marcus@waypointlarvik.no",
+        items: editedItems,
+        updatedAt: FieldValue.serverTimestamp()
+      });
+
+      await ref.collection("events").add({
+        type: "ADMIN_ORDER_EDITED",
+        description: `Ordren og varelinjene ble redigert av ${admin.displayName}.`,
+        actorType: "USER",
+        actorName: admin.displayName,
+        createdAt: FieldValue.serverTimestamp()
+      });
+
+      return NextResponse.json({ ok: true, itemCount: editedItems.length });
+    }
     const nextItems = applyItemChecks(
       currentItems,
       body.itemChecks,

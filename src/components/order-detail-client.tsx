@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { AppHeader } from "@/components/app-header";
+import { AdminOrderEditor } from "@/components/admin-order-editor";
 import {
   ArrowLeft,
   Box,
@@ -169,7 +170,7 @@ export default function OrderPage({
     setLocationCode(nextOrder.locationCode ?? "");
     setFulfillmentMethod(nextOrder.fulfillmentMethod ?? "THIS_THURSDAY");
     setPickupDate(nextOrder.pickupDate ?? "");
-    setPickupRecipientEmail(nextOrder.pickupRecipientEmail ?? window.localStorage.getItem("waypointEmail") ?? "");
+    setPickupRecipientEmail(nextOrder.pickupRecipientEmail ?? window.localStorage.getItem("waypointEmail") ?? "marcus@waypointlarvik.no");
   }, []);
 
   const load = useCallback(async () => {
@@ -635,6 +636,10 @@ export default function OrderPage({
 
         {error && <div className="error-box order-alert">{error}</div>}
         {info && <div className="info-message order-alert">{info}</div>}
+
+        {initialUser.role === "ADMIN" && (
+          <AdminOrderEditor order={order} onUpdated={load} />
+        )}
 
         <div className="picking-workflow-banner">
           <div className={pickingMode ? "workflow-icon active" : "workflow-icon"}>
