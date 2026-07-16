@@ -1133,7 +1133,7 @@ export default function OrderPage({
                   disabled={saving}
                   onClick={() => void sendWaypointEmail(order)}
                 >
-                  <Send size={18} /> Send testmail med vedlegg
+                  <Send size={18} /> Send mail til transportør
                 </button>
                 <button
                   className="outline-action"

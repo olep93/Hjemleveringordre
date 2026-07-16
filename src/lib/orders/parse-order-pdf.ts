@@ -37,7 +37,7 @@ type PositionedText = {
   y: number;
 };
 
-const PARSER_VERSION = "obsbygg-mupdf-v12-open-plu-flattened";
+const PARSER_VERSION = "obsbygg-mupdf-v13-robust-order-table";
 
 function clean(value?: string | null): string {
   return String(value ?? "")
@@ -527,9 +527,10 @@ function parseGenericPluRow(
 }
 
 function parseRows(rows: string[]): ParsedOrderItem[] {
-  const tableStart = rows.findIndex(
-    (row) => /EAN\/PLU/i.test(row) && /Varetekst/i.test(row)
-  );
+  const tableStart = rows.findIndex((row, index) => {
+    if (!/EAN\/PLU/i.test(row)) return false;
+    return /Varetekst/i.test(row) || rows.slice(index, index + 4).some((candidate) => /Varetekst/i.test(candidate));
+  });
 
   // Do not scan the complete document as item rows when the table header
   // was not found. Doing so can turn customer numbers, names and addresses
@@ -584,21 +585,50 @@ function parseRows(rows: string[]): ParsedOrderItem[] {
   return items;
 }
 
+function extractTrailingComment(chunk: string): string | null {
+  const normalized = clean(chunk);
+  if (!normalized) return null;
+
+  // Comments in the Obs Bygg PDF are placed after the final amount on the
+  // product row and before the next EAN/PLU. Examples are "Må bestilles" and
+  // "Tilbud #11465313". Using the final currency value as the boundary also
+  // works for rows that are split into several PDF text spans.
+  const amountPattern = /\b\d{1,3}(?:\.\d{3})*,\d{2}\b/g;
+  const amounts = [...normalized.matchAll(amountPattern)];
+  if (amounts.length === 0) return null;
+
+  const last = amounts[amounts.length - 1];
+  const afterAmount = clean(
+    normalized.slice((last.index ?? 0) + last[0].length)
+  );
+
+  if (!afterAmount) return null;
+  if (/^(?:SUM|TOTALSUM|TOTAL SUM|Å BETAL|A BETAL)\b/i.test(afterAmount)) {
+    return null;
+  }
+
+  return afterAmount;
+}
+
 function parseFlattenedFallback(rows: string[]): ParsedOrderItem[] {
   const text = clean(rows.join(" "));
   const tableStart = text.search(/\bEAN\/PLU\b/i);
   if (tableStart < 0) return [];
 
   const afterHeader = text.slice(tableStart);
-  const tableEnd = afterHeader.search(/\b(?:TOTALSUM|TOTAL SUM|SUM)\b/i);
-  const tableText = tableEnd > 0 ? afterHeader.slice(0, tableEnd) : afterHeader;
 
-  // Structured PDF extraction can place each table column on a separate
-  // visual row. In that case parseRows() cannot see a complete row and the
-  // fallback must recognize both ordinary 12–14 digit EANs and short PLUs.
-  // Restrict short values to the known ÅPEN PLU codes to avoid interpreting
-  // quantities, dates and customer numbers as products.
-  const identifiers = [...tableText.matchAll(/\b(?:20032|29034|90646|\d{12,14})\b/g)];
+  // Do not stop at the first word "Sum": it is part of the table header.
+  // TOTALSUM is the reliable end marker in these customer-order PDFs.
+  const totalSumIndex = afterHeader.search(/\bTOTALSUM\b/i);
+  const tableText =
+    totalSumIndex > 0 ? afterHeader.slice(0, totalSumIndex) : afterHeader;
+
+  // Product starts are either ordinary 12–14 digit EANs or the known short
+  // PLUs used by Obs Bygg. Best.nr values are 7 digits and are intentionally
+  // not treated as new product starts.
+  const identifiers = [
+    ...tableText.matchAll(/\b(?:20032|29034|90646|\d{12,14})\b/g)
+  ];
   const items: ParsedOrderItem[] = [];
 
   for (let index = 0; index < identifiers.length; index++) {
@@ -608,9 +638,16 @@ function parseFlattenedFallback(rows: string[]): ParsedOrderItem[] {
     const end = next?.index ?? tableText.length;
     const chunk = clean(tableText.slice(start, end));
 
-    const item = parseItemRow(chunk, items.length) ??
+    const item =
+      parseItemRow(chunk, items.length) ??
       parseGenericPluRow(chunk, [], items.length);
-    if (item) items.push(item);
+
+    if (!item) continue;
+
+    const trailingComment = extractTrailingComment(chunk);
+    if (trailingComment) item.lineComment = trailingComment;
+
+    items.push(item);
   }
 
   return items;

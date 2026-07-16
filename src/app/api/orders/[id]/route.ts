@@ -564,6 +564,16 @@ export async function POST(
     const existingItems = Array.isArray(data.items) ? data.items : [];
     const enrichedItems = await enrichOrderItems(parsed.items, id, existingItems);
 
+    if (parsed.items.length === 0) {
+      return NextResponse.json(
+        {
+          error:
+            "Ny tolkning fant ingen varelinjer. Eksisterende varelinjer er beholdt."
+        },
+        { status: 422 }
+      );
+    }
+
     await ref.update({
       orderNumber,
       customerName,
