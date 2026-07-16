@@ -35,18 +35,18 @@ export async function POST(request: NextRequest) {
     let items: ParsedOrderItem[] = [];
     const itemsJson = String(form.get("itemsJson") ?? "").trim();
     if (itemsJson) {
-      const entered = JSON.parse(itemsJson) as Array<{articleNumber?: string; description?: string; quantity?: string | number; unit?: string}>;
+      const entered = JSON.parse(itemsJson) as Array<{articleNumber?: string; description?: string; quantity?: string | number; unit?: string; lineComment?: string; identifierType?: "EAN" | "PLU"}>;
       items = entered.filter((x) => x.description?.trim()).map((x, index) => {
         const raw = String(x.description ?? "").trim();
         const open = raw.match(/^(?:ÅPEN|APEN)\s+PLU\s+(.+)$/i);
         return {
           id: `manual-${Date.now()}-${index}`,
-          articleNumber: open || !/^\d{12,14}$/.test(String(x.articleNumber ?? "")) ? null : String(x.articleNumber),
+          articleNumber: String(x.articleNumber ?? "").trim() || null,
           description: open ? open[1].trim() : raw,
           rawDescription: open ? raw : null,
-          lineComment: null,
+          lineComment: String(x.lineComment ?? "").trim() || null,
           identifierType:
-            open ||
+            x.identifierType === "PLU" || open ||
             !/^\d{12,14}$/.test(
               String(x.articleNumber ?? "").trim()
             )

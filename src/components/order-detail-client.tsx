@@ -175,7 +175,7 @@ export default function OrderPage({
     setLocationCode(nextOrder.locationCode ?? "");
     setFulfillmentMethod(nextOrder.fulfillmentMethod ?? "THIS_THURSDAY");
     setPickupDate(nextOrder.pickupDate ?? "");
-    setPickupRecipientEmail(nextOrder.pickupRecipientEmail ?? window.localStorage.getItem("waypointEmail") ?? "marcus@waypointlarvik.no");
+    setPickupRecipientEmail(nextOrder.pickupRecipientEmail ?? "");
     setTransportType(nextOrder.transportType ?? "STANDARD_CRANE_GROUND");
     setTransportComment(nextOrder.transportComment ?? "");
   }, []);
@@ -340,13 +340,7 @@ export default function OrderPage({
   function beginFinalize(){if(!validateBeforeFinalize())return;setPickupDate(fulfillmentMethod==="NEXT_THURSDAY"?thursday(1):fulfillmentMethod==="THIS_THURSDAY"?thursday(0):pickupDate);setShowFulfillment(true)}
   function openOutlookTemplate(current: Order) {
     if (current.source === "CLICK_AND_COLLECT") return;
-    const to = current.pickupRecipientEmail || pickupRecipientEmail.trim();
-    if (!to) {
-      showValidationFeedback("Skriv inn e-postadressen til Waypoint.", {});
-      return;
-    }
-
-    window.localStorage.setItem("waypointEmail", to);
+    const to = current.pickupRecipientEmail || "";
     const share = current.pickupShareToken
       ? `${window.location.origin}/pickup/${current.id}?token=${encodeURIComponent(
           current.pickupShareToken
@@ -401,12 +395,6 @@ export default function OrderPage({
 
   async function sendWaypointEmail(current: Order) {
     if (current.source === "CLICK_AND_COLLECT") return;
-    const to = current.pickupRecipientEmail || pickupRecipientEmail.trim();
-    if (!to) {
-      showValidationFeedback("Skriv inn e-postadressen til Waypoint.", {});
-      return;
-    }
-
     setSaving(true);
     setError(null);
     setInfo("Sender e-post med original kundeordre og plukkebilder …");
@@ -415,7 +403,7 @@ export default function OrderPage({
       const response = await fetch(`/api/orders/${current.id}/waypoint-email`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ to })
+        body: JSON.stringify({})
       });
       const result = await response.json();
       if (!response.ok) {
@@ -461,7 +449,6 @@ export default function OrderPage({
           pickingSessionEnded: true,
           fulfillmentMethod: finalize ? fulfillmentMethod : undefined,
           pickupDate: finalize ? pickupDate : undefined,
-          pickupRecipientEmail: finalize && order.source !== "CLICK_AND_COLLECT" ? pickupRecipientEmail : undefined,
           locationCode: placement === "Kasse Drive-In" ? locationCode : null
         })
       });
@@ -743,8 +730,12 @@ export default function OrderPage({
         {error && <div className="error-box order-alert">{error}</div>}
         {info && <div className="info-message order-alert">{info}</div>}
 
-        {initialUser.role === "ADMIN" && (
-          <AdminOrderEditor order={order} onUpdated={load} />
+        {canEdit && (
+          <AdminOrderEditor
+            order={order}
+            onUpdated={load}
+            canReset={initialUser.role === "ADMIN"}
+          />
         )}
 
         <div className="picking-workflow-banner">
@@ -1145,7 +1136,7 @@ export default function OrderPage({
             ))}
           </div>
         </section>
-        {showFulfillment && <div className="modal-backdrop"><div className="fulfillment-modal"><div className="modal-heading"><div><p className="eyebrow">SISTE STEG</p><h2>Velg utkjøring eller henting</h2></div><button type="button" onClick={()=>setShowFulfillment(false)}><X size={20}/></button></div><div className="fulfillment-options"><button type="button" className={fulfillmentMethod==="THIS_THURSDAY"?"selected":""} onClick={()=>{setFulfillmentMethod("THIS_THURSDAY");setPickupDate(thursday(0))}}><Truck size={20}/><strong>Torsdag inneværende uke</strong><span>{thursday(0)}</span></button><button type="button" className={fulfillmentMethod==="NEXT_THURSDAY"?"selected":""} onClick={()=>{setFulfillmentMethod("NEXT_THURSDAY");setPickupDate(thursday(1))}}><Truck size={20}/><strong>Torsdag neste uke</strong><span>{thursday(1)}</span></button><button type="button" className={fulfillmentMethod==="OWN_VEHICLE"?"selected":""} onClick={()=>setFulfillmentMethod("OWN_VEHICLE")}><Box size={20}/><strong>Egen bil</strong><span>Velg egen dato</span></button></div><label>Dato<input type="date" value={pickupDate} onChange={e=>setPickupDate(e.target.value)}/></label><label>Type transport<select value={transportType} onChange={e=>setTransportType(e.target.value as "STANDARD_CRANE_GROUND"|"LARGE_CRANE"|"VAN")}><option value="STANDARD_CRANE_GROUND">Standard kranbil til bakkeplan</option><option value="LARGE_CRANE">Kranbil stor</option><option value="VAN">Varebil</option></select></label><div className="transport-warning">{transportType==="LARGE_CRANE"?"NB: Dette påløper ekstrakostnad utenfor standard leveringsvilkår, kontakt Waypoint direkte for priser.":transportType==="VAN"?"NB: Innbæring må eventuelt avtales direkte med Waypoint. Dette er kun levering med varebil":"NB: Standard levering leveres normalt kun til bakkeplan og løftes rett av bil. For andre avtaler må transportør kontaktes."}</div><details className="transport-comment-box"><summary>Kommentar til transportør</summary><label>Kommentar til transportør<textarea rows={4} value={transportComment} placeholder="Skriv inn forespørsler eller viktig informasjon til Waypoint..." onChange={e=>setTransportComment(e.target.value)}/></label></details>{order.source!=="CLICK_AND_COLLECT"&&<label>E-post til Waypoint / transport<input type="email" value={pickupRecipientEmail} onChange={e=>setPickupRecipientEmail(e.target.value)}/></label>}<div className="modal-actions"><button className="outline-action" type="button" onClick={()=>setShowFulfillment(false)}>Tilbake</button><button className="green-action" type="button" disabled={saving||!pickupDate||(order.source!=="CLICK_AND_COLLECT"&&fulfillmentMethod!=="OWN_VEHICLE"&&!pickupRecipientEmail.trim())} onClick={()=>void savePicking(true)}><CheckCircle2 size={18}/>Ferdigstill ordre</button></div></div></div>}
+        {showFulfillment && <div className="modal-backdrop"><div className="fulfillment-modal"><div className="modal-heading"><div><p className="eyebrow">SISTE STEG</p><h2>Velg utkjøring eller henting</h2></div><button type="button" onClick={()=>setShowFulfillment(false)}><X size={20}/></button></div><div className="fulfillment-options"><button type="button" className={fulfillmentMethod==="THIS_THURSDAY"?"selected":""} onClick={()=>{setFulfillmentMethod("THIS_THURSDAY");setPickupDate(thursday(0))}}><Truck size={20}/><strong>Torsdag inneværende uke</strong><span>{thursday(0)}</span></button><button type="button" className={fulfillmentMethod==="NEXT_THURSDAY"?"selected":""} onClick={()=>{setFulfillmentMethod("NEXT_THURSDAY");setPickupDate(thursday(1))}}><Truck size={20}/><strong>Torsdag neste uke</strong><span>{thursday(1)}</span></button><button type="button" className={fulfillmentMethod==="OWN_VEHICLE"?"selected":""} onClick={()=>setFulfillmentMethod("OWN_VEHICLE")}><Box size={20}/><strong>Egen bil</strong><span>Velg egen dato</span></button></div><label>Dato<input type="date" value={pickupDate} onChange={e=>setPickupDate(e.target.value)}/></label><label>Type transport<select value={transportType} onChange={e=>setTransportType(e.target.value as "STANDARD_CRANE_GROUND"|"LARGE_CRANE"|"VAN")}><option value="STANDARD_CRANE_GROUND">Standard kranbil til bakkeplan</option><option value="LARGE_CRANE">Kranbil stor</option><option value="VAN">Varebil</option></select></label><div className="transport-warning">{transportType==="LARGE_CRANE"?"NB: Dette påløper ekstrakostnad utenfor standard leveringsvilkår, kontakt Waypoint direkte for priser.":transportType==="VAN"?"NB: Innbæring må eventuelt avtales direkte med Waypoint. Dette er kun levering med varebil":"NB: Standard levering leveres normalt kun til bakkeplan og løftes rett av bil. For andre avtaler må transportør kontaktes."}</div><details className="transport-comment-box"><summary>Kommentar til transportør</summary><label>Kommentar til transportør<textarea rows={4} value={transportComment} placeholder="Skriv inn forespørsler eller viktig informasjon til Waypoint..." onChange={e=>setTransportComment(e.target.value)}/></label></details><div className="modal-actions"><button className="outline-action" type="button" onClick={()=>setShowFulfillment(false)}>Tilbake</button><button className="green-action" type="button" disabled={saving||!pickupDate} onClick={()=>void savePicking(true)}><CheckCircle2 size={18}/>Ferdigstill ordre</button></div></div></div>}
       </section>
     </main>
   );

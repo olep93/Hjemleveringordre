@@ -147,6 +147,17 @@ export default function AdminPage() {
     await updateUser(user, { password });
   }
 
+  async function editUserIdentity(user: User) {
+    const displayName = window.prompt("Visningsnavn:", user.displayName);
+    if (displayName === null) return;
+    const username = window.prompt("Brukernavn / jobb-e-post:", user.username);
+    if (username === null) return;
+    await updateUser(user, {
+      displayName: displayName.trim(),
+      username: username.trim()
+    });
+  }
+
   async function addRecipient(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);
@@ -414,6 +425,14 @@ export default function AdminPage() {
                   <option value="MANAGER">Leder</option>
                   <option value="ADMIN">Administrator</option>
                 </select>
+
+                <button
+                  className="outline-action compact"
+                  disabled={busy}
+                  onClick={() => void editUserIdentity(user)}
+                >
+                  <Users size={16} /> Endre navn
+                </button>
 
                 <button
                   className="outline-action compact"

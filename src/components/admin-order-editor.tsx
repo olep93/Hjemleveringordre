@@ -46,25 +46,23 @@ type Order = {
 
 export function AdminOrderEditor({
   order,
-  onUpdated
+  onUpdated,
+  canReset = false
 }: {
   order: Order;
   onUpdated: () => Promise<void>;
+  canReset?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [draft, setDraft] = useState<Order>({
     ...order,
-    pickupRecipientEmail:
-      order.pickupRecipientEmail || "marcus@waypointlarvik.no",
     items: (order.items ?? []).map((item) => ({ ...item }))
   });
 
   function resetDraft() {
     setDraft({
       ...order,
-      pickupRecipientEmail:
-        order.pickupRecipientEmail || "marcus@waypointlarvik.no",
       items: (order.items ?? []).map((item) => ({ ...item }))
     });
   }
@@ -163,9 +161,11 @@ export function AdminOrderEditor({
         <button className="outline-action" onClick={() => { resetDraft(); setOpen(true); }}>
           <Pencil size={17} /> Rediger hele ordren
         </button>
-        <button className="admin-reset-button" onClick={() => void resetToPick()}>
-          <RotateCcw size={17} /> Tilbakestill til «Må plukkes»
-        </button>
+{canReset && (
+          <button className="admin-reset-button" onClick={() => void resetToPick()}>
+            <RotateCcw size={17} /> Tilbakestill til «Må plukkes»
+          </button>
+        )}
       </div>
     );
   }
@@ -174,7 +174,7 @@ export function AdminOrderEditor({
     <section className="admin-order-editor">
       <div className="admin-order-editor-heading">
         <div>
-          <p className="eyebrow">ADMINISTRATOR</p>
+          <p className="eyebrow">ORDREREDIGERING</p>
           <h2>Rediger hele ordren</h2>
         </div>
         <button onClick={() => setOpen(false)}><X size={20} /></button>
@@ -195,14 +195,14 @@ export function AdminOrderEditor({
         <label>Leveringsmåte<select value={draft.fulfillmentMethod || ""} onChange={(e)=>field("fulfillmentMethod",(e.target.value || null) as Order["fulfillmentMethod"])}>
           <option value="">Ikke valgt</option><option value="THIS_THURSDAY">Torsdag inneværende uke</option><option value="NEXT_THURSDAY">Torsdag neste uke</option><option value="OWN_VEHICLE">Egen bil</option>
         </select></label>
-        <label>Transporttype<select value={draft.transportType || "STANDARD_CRANE_GROUND"} onChange={(e)=>field("transportType",e.target.value as Order["transportType"])}><option value="STANDARD_CRANE_GROUND">Standard kranbil til bakkeplan</option><option value="LARGE_CRANE">Kranbil stor</option><option value="VAN">Varebil</option></select></label><label className="full">Kommentar til transportør<textarea rows={3} value={draft.transportComment || ""} onChange={(e)=>field("transportComment",e.target.value)} /></label><label>Waypoint-mottaker<input type="email" value={draft.pickupRecipientEmail || ""} onChange={(e)=>field("pickupRecipientEmail",e.target.value)} /></label>
+        <label>Transporttype<select value={draft.transportType || "STANDARD_CRANE_GROUND"} onChange={(e)=>field("transportType",e.target.value as Order["transportType"])}><option value="STANDARD_CRANE_GROUND">Standard kranbil til bakkeplan</option><option value="LARGE_CRANE">Kranbil stor</option><option value="VAN">Varebil</option></select></label><label className="full">Kommentar til transportør<textarea rows={3} value={draft.transportComment || ""} onChange={(e)=>field("transportComment",e.target.value)} /></label>
         <label className="full">Kommentar<textarea rows={3} value={draft.comment || ""} onChange={(e)=>field("comment",e.target.value)} /></label>
       </div>
 
       <div className="admin-items-heading">
         <div>
           <h3>Bilder av ferdig plukket ordre</h3>
-          <p>Administrator kan åpne eller slette feilaktige bilder.</p>
+          <p>Lagrede bilder kan åpnes her. Administrator kan også slette feilaktige bilder.</p>
         </div>
       </div>
 
@@ -236,14 +236,16 @@ export function AdminOrderEditor({
                     <ExternalLink size={15} /> Åpne
                   </a>
                 )}
-                <button
-                  className="admin-item-delete"
-                  type="button"
-                  disabled={saving}
-                  onClick={() => void deletePhoto(index)}
-                >
-                  <Trash2 size={15} /> Slett bilde
-                </button>
+                {canReset && (
+                  <button
+                    className="admin-item-delete"
+                    type="button"
+                    disabled={saving}
+                    onClick={() => void deletePhoto(index)}
+                  >
+                    <Trash2 size={15} /> Slett bilde
+                  </button>
+                )}
               </div>
             </article>
           ))}
@@ -282,7 +284,7 @@ export function AdminOrderEditor({
       </div>
 
       <div className="admin-editor-actions">
-        <button className="admin-reset-button" onClick={() => void resetToPick()}><RotateCcw size={17}/> Tilbakestill</button>
+{canReset && <button className="admin-reset-button" onClick={() => void resetToPick()}><RotateCcw size={17}/> Tilbakestill</button>}
         <button className="outline-action" onClick={()=>setOpen(false)}><X size={17}/> Avbryt</button>
         <button className="blue-action" disabled={saving} onClick={()=>void save()}><Save size={17}/> {saving ? "Lagrer …" : "Lagre endringer"}</button>
       </div>

@@ -233,7 +233,9 @@ export async function PATCH(
       : [];
 
     if (body.adminAction || body.adminEdit) {
-      const admin = await requireRole(["ADMIN"]);
+      const editor = body.adminAction
+        ? await requireRole(["ADMIN"])
+        : await requireRole(["EMPLOYEE", "MANAGER", "ADMIN"]);
 
       if (body.adminAction === "RESET_TO_PICK") {
         const resetItems = currentItems.map((item) => ({
@@ -262,9 +264,9 @@ export async function PATCH(
 
         await ref.collection("events").add({
           type: "ADMIN_RESET_TO_PICK",
-          description: `Ordren ble tilbakestilt til «Må plukkes» av ${admin.displayName}.`,
+          description: `Ordren ble tilbakestilt til «Må plukkes» av ${editor.displayName}.`,
           actorType: "USER",
-          actorName: admin.displayName,
+          actorName: editor.displayName,
           createdAt: FieldValue.serverTimestamp()
         });
 
@@ -297,7 +299,7 @@ export async function PATCH(
                 quantity: Number(item.quantity) || 1,
                 unit: String(item.unit ?? "Stk").trim() || "Stk",
                 checked: Boolean(item.checked),
-                checkedBy: item.checked ? item.checkedBy ?? admin.displayName : null,
+                checkedBy: item.checked ? item.checkedBy ?? editor.displayName : null,
                 checkedAt: item.checked ? item.checkedAt ?? new Date().toISOString() : null,
                 isFreight: Boolean(item.isFreight)
               };
@@ -318,18 +320,15 @@ export async function PATCH(
         transportType: edit.transportType ?? null,
         transportComment: edit.transportComment?.trim() || null,
         pickupDate: edit.pickupDate || null,
-        pickupRecipientEmail:
-          edit.pickupRecipientEmail?.trim().toLowerCase() ||
-          "marcus@waypointlarvik.no",
         items: editedItems,
         updatedAt: FieldValue.serverTimestamp()
       });
 
       await ref.collection("events").add({
-        type: "ADMIN_ORDER_EDITED",
-        description: `Ordren og varelinjene ble redigert av ${admin.displayName}.`,
+        type: "ORDER_EDITED",
+        description: `Hele ordren og varelinjene ble redigert av ${editor.displayName}.`,
         actorType: "USER",
-        actorName: admin.displayName,
+        actorName: editor.displayName,
         createdAt: FieldValue.serverTimestamp()
       });
 

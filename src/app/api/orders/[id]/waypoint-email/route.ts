@@ -84,11 +84,7 @@ export async function POST(
       .trim()
       .toLowerCase();
 
-    const waypointEmail = String(
-      body.to || order.pickupRecipientEmail || configuredWaypointEmail
-    )
-      .trim()
-      .toLowerCase();
+    const waypointEmail = configuredWaypointEmail;
 
     const loggedInEmail = String(user.username ?? "")
       .trim()
